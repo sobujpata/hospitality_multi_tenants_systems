@@ -1,0 +1,12 @@
+import { Head, router } from '@inertiajs/react';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+
+type Props = { events: Record<string, string>; preferences: Record<string, string[]>; notifications: { id: string; data: { title?: string; message?: string }; read_at: string | null; created_at: string }[] };
+const channels = ['database', 'mail', 'broadcast'];
+
+export default function Notifications({ events, preferences: initial, notifications }: Props) {
+    const [preferences, setPreferences] = useState<Record<string, string[]>>(Object.fromEntries(Object.keys(events).map((event) => [event, initial[event] ?? channels])));
+    const toggle = (event: string, channel: string) => setPreferences({ ...preferences, [event]: preferences[event].includes(channel) ? preferences[event].filter((item) => item !== channel) : [...preferences[event], channel] });
+    return <><Head title="Notification Preferences" /><div className="flex flex-1 flex-col gap-5 p-4"><div><h1 className="text-2xl font-semibold">Notification preferences</h1><p className="text-sm text-muted-foreground">Choose which alerts you receive and where they are delivered.</p></div><section className="rounded-xl border p-5"><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-3">Notification</th>{channels.map((channel) => <th className="p-3 capitalize" key={channel}>{channel}</th>)}</tr></thead><tbody>{Object.entries(events).map(([event, label]) => <tr className="border-b" key={event}><td className="p-3">{label}</td>{channels.map((channel) => <td className="p-3" key={channel}><input type="checkbox" checked={preferences[event].includes(channel)} onChange={() => toggle(event, channel)} /></td>)}</tr>)}</tbody></table></div><Button className="mt-4" onClick={() => router.put('/settings/notifications', { preferences })}>Save preferences</Button></section><section className="rounded-xl border p-5"><h2 className="mb-3 text-lg font-medium">Recent notifications</h2>{notifications.length === 0 ? <p className="text-sm text-muted-foreground">No notifications yet.</p> : notifications.map((notification) => <div className={`border-b py-3 text-sm ${notification.read_at ? '' : 'font-medium'}`} key={notification.id}><div>{notification.data.title ?? 'Notification'}</div><div className="text-muted-foreground">{notification.data.message}</div><div className="text-xs text-muted-foreground">{new Date(notification.created_at).toLocaleString()}</div></div>)}</section></div></>;
+}

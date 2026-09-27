@@ -1,0 +1,13 @@
+[Unit]
+Description=Hospitality Laravel queue worker
+After=network.target redis-server.service
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/hospitality-app
+ExecStart=/usr/bin/php artisan queue:work redis --sleep=3 --tries=3 --timeout=120
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
