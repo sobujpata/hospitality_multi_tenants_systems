@@ -10,9 +10,9 @@ import {
     Coffee,
     Croissant,
     Dumbbell,
-    Droplets,
     GlassWater,
     Headset,
+    Info,
     MapPin,
     Minus,
     Phone,
@@ -23,9 +23,17 @@ import {
     Utensils,
     Wifi,
     Users,
+    type LucideIcon,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import AppLayoutHome from '@/layouts/app-layout-home';
 
@@ -40,23 +48,41 @@ type Branch = {
     email: string | null;
     cover_image: string | null;
     star_rating: number | null;
+    latitude: string | null;
+    longitude: string | null;
+    google_embed_url: string | null;
+    map_zoom_level: number;
     currency: string;
     amenities: string[];
+    facilities: Facility[];
     available_rooms: number;
     lowest_price: string | null;
+};
+
+type Facility = {
+    id: number;
+    name: string;
+    icon_type: string;
+    icon_value: string;
+    icon_url: string | null;
+    category: string;
+    color: string;
 };
 
 type Unit = {
     id: number;
     branch_id: number;
+    unit_type: string;
     number: string;
     name: string;
+    floor: string | null;
     base_price: string;
     price_weekend: string | null;
     capacity: number;
     amenities: string[];
     images: string[];
     category: string | null;
+    status: string;
 };
 
 type Props = {
@@ -82,22 +108,31 @@ const roomPhotoFallbacks = [
     'https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=800&q=85',
     'https://images.unsplash.com/photo-1631049307264-da0ec9d70304?auto=format&fit=crop&w=800&q=85',
 ];
-const facilityItems = [
-    { name: 'Free WiFi', icon: Wifi },
-    { name: 'Restaurant', icon: Utensils },
-    { name: 'Gym', icon: Dumbbell },
-    { name: 'Room Service', icon: BellRing },
-    { name: 'Tea & Coffee', icon: Coffee },
-    { name: 'Free toiletries', icon: Sparkles },
-    { name: '24/hr Support', icon: Headset },
-    { name: 'Hot water', icon: ShowerHead },
-    { name: 'Air Condition', icon: AirVent },
-    { name: 'Intercom', icon: Phone },
-    { name: 'Complimentary Breakfast', icon: Croissant },
-    { name: 'Mineral water', icon: GlassWater },
-    { name: 'Television', icon: Tv },
-    { name: 'Car Parking', icon: CarFront },
-];
+const facilityIcons: Record<string, LucideIcon> = {
+    airvent: AirVent,
+    bellring: BellRing,
+    carfront: CarFront,
+    coffee: Coffee,
+    croissant: Croissant,
+    dumbbell: Dumbbell,
+    glasswater: GlassWater,
+    headset: Headset,
+    phone: Phone,
+    showerhead: ShowerHead,
+    sparkles: Sparkles,
+    tv: Tv,
+    utensils: Utensils,
+    wifi: Wifi,
+};
+
+function facilityIcon(iconValue: string): LucideIcon {
+    const normalizedName = iconValue
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase()
+        .replace(/^heroicons?o?/, '');
+
+    return facilityIcons[normalizedName] ?? Sparkles;
+}
 
 function categoryAnchor(name: string): string {
     return `room-category-${name
@@ -180,9 +215,20 @@ export default function Book({
     const [adults, setAdults] = useState(Math.max(1, initialAdults));
     const [children, setChildren] = useState(Math.max(0, initialChildren));
     const [specialRequests, setSpecialRequests] = useState(initialSpecialRequests);
+    const [detailsUnit, setDetailsUnit] = useState<Unit | null>(null);
 
     const branch = branches.find((item) => item.id === branchId);
     const branchUnits = units.filter((unit) => unit.branch_id === branchId);
+    const branchMapQuery = branch?.latitude && branch.longitude
+        ? `${branch.latitude},${branch.longitude}`
+        : [branch?.address, branch?.city, branch?.country].filter(Boolean).join(', ');
+    const branchMapEmbedUrl = branch?.google_embed_url
+        || (branchMapQuery
+            ? `https://maps.google.com/maps?q=${encodeURIComponent(branchMapQuery)}&z=${branch?.map_zoom_level ?? 15}&output=embed`
+            : null);
+    const branchMapLinkUrl = branchMapQuery
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(branchMapQuery)}`
+        : null;
     const nights = nightsBetween(checkIn, checkOut);
     const totalGuests = adults + children;
     const selectedUnits = selectedUnitIds
@@ -494,6 +540,7 @@ export default function Book({
                                 ['Gallery', 'gallery'],
                                 ['About', 'about'],
                                 ['Contact', 'contact'],
+                                ['Location', 'location'],
                             ].map(([label, target]) => (
                                 <a
                                     key={target}
@@ -507,10 +554,10 @@ export default function Book({
                     </nav>
                 )}
 
-                <main className="mx-auto grid max-w-7xl gap-8 px-6 py-8 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
-                    <div className="space-y-8">
+                <main className="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-8 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+                    <div className="contents lg:col-start-1 lg:block lg:space-y-8">
                         {!branchId ? (
-                            <section>
+                            <section className="order-1 lg:order-none">
                                 <div className="mb-4">
                                     <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
                                         Available properties
@@ -588,7 +635,7 @@ export default function Book({
                             </section>
                         ) : branch ? (
                             <>
-                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="order-1 flex flex-wrap items-start justify-between gap-3 lg:order-none">
                                     <div>
                                         <button
                                             type="button"
@@ -621,7 +668,7 @@ export default function Book({
                                     </div>
                                 </div>
 
-                                <section id="rooms" className="scroll-mt-20 space-y-4">
+                                <section id="rooms" className="order-2 scroll-mt-20 space-y-4 lg:order-none">
                                     {visibleCategories.map((category) => (
                                         <div
                                             key={category.name}
@@ -688,6 +735,15 @@ export default function Book({
                                                                 />
                                                                 <button
                                                                     type="button"
+                                                                    aria-label={`View details for ${unit.name}, room ${unit.number}`}
+                                                                    title={`View details for room ${unit.number}`}
+                                                                    onClick={() => setDetailsUnit(unit)}
+                                                                    className="absolute left-2 top-2 grid size-9 place-items-center rounded-full bg-white/95 text-slate-900 shadow-md transition hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+                                                                >
+                                                                    <Info className="size-5" />
+                                                                </button>
+                                                                <button
+                                                                    type="button"
                                                                     aria-label={`${selected ? 'Remove' : 'Select'} ${unit.name}, room ${unit.number}`}
                                                                     aria-pressed={selected}
                                                                     title={`${selected ? 'Remove' : 'Select'} room ${unit.number}`}
@@ -708,90 +764,7 @@ export default function Book({
                                                         );
                                                     })}
                                                 </div>
-                                                <button
-                                                    type="button"
-                                                    aria-expanded={Boolean(
-                                                        expandedCategoryDetails[category.name],
-                                                    )}
-                                                    onClick={() =>
-                                                        setExpandedCategoryDetails((current) => ({
-                                                            ...current,
-                                                            [category.name]: !current[category.name],
-                                                        }))
-                                                    }
-                                                    className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-950"
-                                                >
-                                                    {expandedCategoryDetails[category.name]
-                                                        ? 'Hide room details'
-                                                        : 'Room details'}
-                                                    <ChevronDown
-                                                        className={`size-4 transition-transform ${
-                                                            expandedCategoryDetails[category.name]
-                                                                ? 'rotate-180'
-                                                                : ''
-                                                        }`}
-                                                    />
-                                                </button>
-                                                {expandedCategoryDetails[category.name] && (
-                                                    <div className="mt-3 border-t border-slate-100 pt-4">
-                                                        <div className="rounded-xl bg-slate-50 p-4">
-                                                            <div className="flex flex-wrap items-start justify-between gap-3">
-                                                                <div>
-                                                                    <h4 className="font-semibold">
-                                                                        {category.name}
-                                                                    </h4>
-                                                                    <p className="mt-1 text-sm text-slate-500">
-                                                                        {category.units.length}{' '}
-                                                                        {category.units.length === 1
-                                                                            ? 'room'
-                                                                            : 'rooms'}{' '}
-                                                                        in this category · Up to{' '}
-                                                                        {category.capacity}{' '}
-                                                                        {category.capacity === 1
-                                                                            ? 'guest'
-                                                                            : 'guests'}{' '}
-                                                                        per room
-                                                                    </p>
-                                                                </div>
-                                                                <p className="text-sm font-semibold">
-                                                                    From{' '}
-                                                                    {formatPrice(
-                                                                        category.lowestPrice,
-                                                                        currency,
-                                                                    )}{' '}
-                                                                    <span className="font-normal text-slate-500">
-                                                                        per night
-                                                                    </span>
-                                                                </p>
-                                                            </div>
-                                                            {Array.from(
-                                                                new Set(
-                                                                    category.units.flatMap(
-                                                                        (unit) => unit.amenities,
-                                                                    ),
-                                                                ),
-                                                            ).length > 0 && (
-                                                                <div className="mt-3 flex flex-wrap gap-1.5">
-                                                                    {Array.from(
-                                                                        new Set(
-                                                                            category.units.flatMap(
-                                                                                (unit) =>
-                                                                                    unit.amenities,
-                                                                            ),
-                                                                        ),
-                                                                    ).map((amenity) => (
-                                                                        <span
-                                                                            key={amenity}
-                                                                            className="max-w-full break-words rounded-full bg-white px-2 py-1 text-xs text-slate-600 ring-1 ring-slate-200"
-                                                                        >
-                                                                            {amenity}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                )}
+                                                
                                             </div>
                                         </div>
                                     ))}
@@ -822,7 +795,7 @@ export default function Book({
                                     <form
                                         id="booking-confirm-form"
                                         onSubmit={confirmBooking}
-                                        className="space-y-6"
+                                        className="order-5 space-y-6 lg:order-none"
                                     >
                                         <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
                                             <h2 className="text-xl font-semibold">
@@ -907,7 +880,7 @@ export default function Book({
 
                                 <section
                                     id="facilities"
-                                    className="scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"
+                                    className="order-6 scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:order-none"
                                 >
                                     <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
                                         Property facilities
@@ -915,26 +888,52 @@ export default function Book({
                                     <h2 className="mt-1 text-xl font-semibold">
                                         Facilities & services
                                     </h2>
-                                    <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                                        {facilityItems.map(({ name, icon: Icon }) => (
-                                            <div
-                                                key={name}
-                                                className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
-                                            >
-                                                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-800">
-                                                    <Icon className="size-5" aria-hidden="true" />
-                                                </span>
-                                                <span className="break-words text-sm font-medium">
-                                                    {name}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
+                                    {branch?.facilities.length ? (
+                                        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+                                            {branch.facilities.map((facility) => {
+                                                const Icon = facilityIcon(facility.icon_value);
+                                                const iconColor = /^#[0-9A-Fa-f]{6}$/.test(facility.color)
+                                                    ? facility.color
+                                                    : '#6B7280';
+
+                                                return (
+                                                    <div
+                                                        key={facility.id}
+                                                        className="flex min-w-0 flex-col items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-center"
+                                                        title={`${facility.category} · ${facility.icon_type}`}
+                                                    >
+                                                        <span
+                                                            className="grid size-10 shrink-0 place-items-center rounded-full bg-white"
+                                                            style={{ color: iconColor }}
+                                                        >
+                                                            {facility.icon_url ? (
+                                                                <img
+                                                                    src={facility.icon_url}
+                                                                    alt=""
+                                                                    aria-hidden="true"
+                                                                    className="size-5 object-contain"
+                                                                />
+                                                            ) : (
+                                                                <Icon className="size-5" aria-hidden="true" />
+                                                            )}
+                                                        </span>
+                                                        <span className="break-words text-sm font-medium">
+                                                            {facility.name}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <p className="mt-3 text-sm text-slate-500">
+                                            No facilities are listed for this property yet.
+                                        </p>
+                                    )}
                                 </section>
 
                                 <section
                                     id="gallery"
-                                    className="scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"
+                                    className="order-7 scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:order-none"
                                 >
                                     <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
                                         Gallery
@@ -970,7 +969,7 @@ export default function Book({
 
                                 <section
                                     id="about"
-                                    className="scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200"
+                                    className="order-8 scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:order-none"
                                 >
                                     <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
                                         About
@@ -990,7 +989,7 @@ export default function Book({
 
                                 <section
                                     id="contact"
-                                    className="scroll-mt-20 rounded-2xl bg-slate-950 p-6 text-white"
+                                    className="order-9 scroll-mt-20 rounded-2xl bg-slate-950 p-6 text-white lg:order-none"
                                 >
                                     <p className="text-sm font-semibold tracking-[0.18em] text-amber-300 uppercase">
                                         Contact
@@ -1030,9 +1029,9 @@ export default function Book({
                         ) : null}
                     </div>
 
-                    <aside className="lg:sticky lg:top-6 lg:self-start">
-                        <div className="space-y-5">
-                            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                    <aside className="contents lg:col-start-2 lg:row-start-1 lg:block lg:sticky lg:top-6 lg:self-start">
+                        <div className="contents lg:block lg:space-y-5">
+                            <section className="order-3 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:order-none">
                                 <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
                                     Guests
                                 </p>
@@ -1079,7 +1078,7 @@ export default function Book({
                                 </div>
                             </section>
 
-                            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+                            <section className="order-4 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:order-none">
                                 <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
                                     Booking summary
                                 </p>
@@ -1174,7 +1173,7 @@ export default function Book({
                             </section>
 
                             {branch && (
-                                <section className="rounded-2xl bg-slate-950 p-6 text-white">
+                                <section className="order-10 rounded-2xl bg-slate-950 p-6 text-white lg:order-none">
                                     <h2 className="font-semibold">Need a hand?</h2>
                                     <p className="mt-2 text-sm text-slate-300">
                                         Contact {branch.name} with questions about your stay.
@@ -1190,9 +1189,42 @@ export default function Book({
                                 </section>
                             )}
 
+                            {branch && branchMapEmbedUrl && (
+                                <section id='location' className="order-11 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 lg:order-none">
+                                    <div className="flex items-center justify-between gap-3 p-5">
+                                        <div>
+                                            <h2 className="font-semibold">Find {branch.name}</h2>
+                                            <p className="mt-1 text-sm text-slate-500">
+                                                {[branch.address, branch.city, branch.country]
+                                                    .filter(Boolean)
+                                                    .join(', ')}
+                                            </p>
+                                        </div>
+                                        {branchMapLinkUrl && (
+                                            <a
+                                                href={branchMapLinkUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-amber-700 hover:text-amber-800"
+                                            >
+                                                <MapPin className="size-4" />
+                                                Open map
+                                            </a>
+                                        )}
+                                    </div>
+                                    <iframe
+                                        title={`${branch.name} location map`}
+                                        src={branchMapEmbedUrl}
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer-when-downgrade"
+                                        className="h-64 w-full border-t border-slate-100"
+                                    />
+                                </section>
+                            )}
+
                             <Link
                                 href="/portal"
-                                className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900"
+                                className="order-12 inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900 lg:order-none"
                             >
                                 <ArrowLeft className="size-4" />
                                 My guest account
@@ -1201,6 +1233,102 @@ export default function Book({
                     </aside>
                 </main>
             </div>
+            <Dialog
+                open={detailsUnit !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setDetailsUnit(null);
+                    }
+                }}
+            >
+                {detailsUnit && (
+                    <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>{detailsUnit.name}</DialogTitle>
+                            <DialogDescription>
+                                Room {detailsUnit.number}
+                                {detailsUnit.category ? ` · ${detailsUnit.category}` : ''}
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-5">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-xs text-slate-500">Unit type</p>
+                                    <p className="mt-1 font-medium">{detailsUnit.unit_type}</p>
+                                </div>
+                                <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-xs text-slate-500">Floor</p>
+                                    <p className="mt-1 font-medium">{detailsUnit.floor || 'Not specified'}</p>
+                                </div>
+                                <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-xs text-slate-500">Capacity</p>
+                                    <p className="mt-1 font-medium">
+                                        {detailsUnit.capacity}{' '}
+                                        {detailsUnit.capacity === 1 ? 'guest' : 'guests'}
+                                    </p>
+                                </div>
+                                <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-xs text-slate-500">Status</p>
+                                    <p className="mt-1 font-medium">{detailsUnit.status}</p>
+                                </div>
+                                <div className="rounded-lg bg-slate-50 p-3">
+                                    <p className="text-xs text-slate-500">Price per night</p>
+                                    <p className="mt-1 font-medium">
+                                        {formatPrice(Number(detailsUnit.base_price), currency)}
+                                    </p>
+                                </div>
+                                {detailsUnit.price_weekend && (
+                                    <div className="rounded-lg bg-slate-50 p-3">
+                                        <p className="text-xs text-slate-500">Weekend price per night</p>
+                                        <p className="mt-1 font-medium">
+                                            {formatPrice(Number(detailsUnit.price_weekend), currency)}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                            <section>
+                                <h3 className="font-semibold">Amenities</h3>
+                                {detailsUnit.amenities.length > 0 ? (
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        {detailsUnit.amenities.map((amenity) => (
+                                            <span
+                                                key={amenity}
+                                                className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700"
+                                            >
+                                                {amenity}
+                                            </span>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="mt-2 text-sm text-slate-500">
+                                        No amenities listed.
+                                    </p>
+                                )}
+                            </section>
+                            <section>
+                                <h3 className="font-semibold">Photos</h3>
+                                {detailsUnit.images.length > 0 ? (
+                                    <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                        {detailsUnit.images.map((image, index) => (
+                                            <img
+                                                key={image}
+                                                src={image}
+                                                alt={`${detailsUnit.name}, room ${detailsUnit.number}, photo ${index + 1}`}
+                                                loading="lazy"
+                                                className="aspect-[4/3] w-full rounded-lg object-cover"
+                                            />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="mt-2 text-sm text-slate-500">
+                                        No photos available for this unit.
+                                    </p>
+                                )}
+                            </section>
+                        </div>
+                    </DialogContent>
+                )}
+            </Dialog>
         </>
     );
 }

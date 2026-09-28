@@ -57,6 +57,12 @@ class BranchController extends Controller
             'currency' => 'required|string|size:3',
             'star_rating' => 'nullable|integer|min:1|max:5',
             'amenities' => 'nullable|array',
+            'amenities.*' => 'nullable|string|max:255',
+            'latitude' => ['nullable', 'numeric', 'between:-90,90', 'required_with:longitude'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180', 'required_with:latitude'],
+            'google_place_id' => ['nullable', 'string', 'max:255'],
+            'map_zoom_level' => ['nullable', 'integer', 'between:1,20'],
+            'map_marker_color' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
             'is_active' => ['nullable', 'in:true,false'],
             'cover_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
         ]);
@@ -91,7 +97,23 @@ class BranchController extends Controller
 
             'star_rating' => $validated['star_rating'] ?? null,
 
-            'amenities' => $validated['amenities'] ?? [],
+            'amenities' => array_values(array_filter(
+                array_map(
+                    static fn (?string $amenity): string => trim($amenity ?? ''),
+                    $validated['amenities'] ?? [],
+                ),
+                fn (string $amenity): bool => $amenity !== '',
+            )),
+            'latitude' => $validated['latitude'] ?? null,
+            'longitude' => $validated['longitude'] ?? null,
+            'google_place_id' => $validated['google_place_id'] ?? null,
+            'google_embed_url' => $this->googleEmbedUrl(
+                $validated['latitude'] ?? null,
+                $validated['longitude'] ?? null,
+                (int) ($validated['map_zoom_level'] ?? 15),
+            ),
+            'map_zoom_level' => $validated['map_zoom_level'] ?? 15,
+            'map_marker_color' => $validated['map_marker_color'] ?? '#E74C3C',
 
             'is_active' => filter_var(
                 $validated['is_active'] ?? false,
@@ -104,11 +126,60 @@ class BranchController extends Controller
         return back()->with('status', 'Branch created successfully.');
     }
 
-    public function update(Request $request, Branch $branch): RedirectResponse
+    public function update(Request $request): RedirectResponse
     {
+        // dd($request->all());
         $this->ensureManager();
-        $this->ensureTenantBranch($branch);
-        $branch->update($this->validatedData($request, $branch));
+        $branchId = $request->route('branch');
+        abort_unless(is_string($branchId) || is_int($branchId), 404);
+
+        $branch = Branch::query()->findOrFail($branchId);
+        $validatedAmenities = $request->validate([
+            'amenities' => ['nullable', 'array'],
+            'amenities.*' => ['nullable', 'string', 'max:255'],
+        ]);
+        $amenities = array_values(array_filter(
+            array_map(
+                static fn (?string $amenity): string => trim($amenity ?? ''),
+                $validatedAmenities['amenities'] ?? [],
+            ),
+            fn (string $amenity): bool => $amenity !== '',
+        ));
+        // dd($branch);
+        if ($request->hasFile('cover_image')) {
+            $coverImagePath = $request->file('cover_image')->store(
+                'branches',
+                'public'
+            );
+        } else {
+            $coverImagePath = $branch->cover_image;
+        }
+        // $this->ensureTenantBranch($branch);
+        $branch->update([
+            'name' => $request->input('name'),
+            'type' => $request->input('type'),
+            'address' => $request->input('address'),
+            'city' => $request->input('city'),
+            'country' => $request->input('country'),
+            'phone' => $request->input('phone'),
+            'email' => $request->input('email'),
+            'timezone' => $request->input('timezone'),
+            'currency' => strtoupper($request->input('currency')),
+            'star_rating' => $request->input('star_rating'),
+            'amenities' => $amenities,
+            'latitude' => $request->input('latitude'),
+            'longitude' => $request->input('longitude'),
+            'google_place_id' => $request->input('google_place_id'),
+            'google_embed_url' => $this->googleEmbedUrl(
+                $request->input('latitude'),
+                $request->input('longitude'),
+                (int) ($request->input('map_zoom_level') ?? 15),
+            ),
+            'map_zoom_level' => $request->input('map_zoom_level', 15),
+            'map_marker_color' => $request->input('map_marker_color', '#E74C3C'),
+            'is_active' => filter_var($request->input('is_active'), FILTER_VALIDATE_BOOLEAN) ? 1 : 0,
+            'cover_image' => $coverImagePath,
+        ]);
 
         return back()->with('status', 'Branch updated.');
     }
@@ -168,9 +239,22 @@ class BranchController extends Controller
             'currency' => ['required', 'string', 'size:3'],
             'star_rating' => ['nullable', 'integer', 'between:1,5'],
             'amenities' => ['nullable', 'array'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90', 'required_with:longitude'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180', 'required_with:latitude'],
+            'google_place_id' => ['nullable', 'string', 'max:255'],
+            'map_zoom_level' => ['nullable', 'integer', 'between:1,20'],
+            'map_marker_color' => ['nullable', 'regex:/^#[0-9A-Fa-f]{6}$/'],
             'is_active' => ['boolean'],
             'cover_image' => ['nullable', 'image', 'max:5120'],
         ]);
+
+        $data['google_embed_url'] = $this->googleEmbedUrl(
+            $data['latitude'] ?? null,
+            $data['longitude'] ?? null,
+            (int) ($data['map_zoom_level'] ?? 15),
+        );
+        $data['map_zoom_level'] = $data['map_zoom_level'] ?? 15;
+        $data['map_marker_color'] = $data['map_marker_color'] ?? '#E74C3C';
 
         if ($request->hasFile('cover_image')) {
             if ($branch?->cover_image) {
@@ -183,6 +267,15 @@ class BranchController extends Controller
         $data['is_active'] = (bool) ($data['is_active'] ?? true);
 
         return $data;
+    }
+
+    private function googleEmbedUrl(?string $latitude, ?string $longitude, int $zoom): ?string
+    {
+        if ($latitude === null || $longitude === null) {
+            return null;
+        }
+
+        return "https://maps.google.com/maps?q={$latitude},{$longitude}&z={$zoom}&output=embed";
     }
 
     private function ensureManager(): void

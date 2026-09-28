@@ -21,6 +21,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'star_rating',
     'cover_image',
     'amenities',
+    'latitude',
+    'longitude',
+    'google_place_id',
+    'google_maps_url',
+    'google_embed_url',
+    'map_zoom_level',
+    'map_marker_color',
     'is_active',
     'settings',
 ])]
@@ -49,5 +56,21 @@ class Branch extends Model
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);
+    }
+
+    // Auto-build Google Maps URL from coordinates
+    public function getGoogleMapsUrlAttribute(): string
+    {
+        if ($this->latitude && $this->longitude) {
+            return "https://maps.google.com/?q={$this->latitude},{$this->longitude}";
+        }
+
+        return $this->attributes['google_maps_url'] ?? '#';
+    }
+
+    // Check if map coordinates are set
+    public function hasCoordinates(): bool
+    {
+        return ! is_null($this->latitude) && ! is_null($this->longitude);
     }
 }

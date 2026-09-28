@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Amenity;
 use App\Models\Booking;
 use App\Models\BookingModificationRequest;
 use App\Models\Branch;
@@ -112,10 +113,18 @@ class CustomerPortalController extends Controller
             ->with(['category' => fn ($query) => $query->withoutGlobalScopes()])
             ->orderBy('base_price')
             ->get([
-                'id', 'branch_id', 'number', 'name', 'base_price', 'price_weekend',
-                'capacity', 'amenities', 'images', 'unit_category_id',
+                'id', 'branch_id', 'unit_type', 'number', 'name', 'floor',
+                'base_price', 'price_weekend', 'capacity', 'amenities', 'images',
+                'status', 'unit_category_id',
             ]);
         $availableBranchIds = $units->pluck('branch_id')->unique()->all();
+        $facilitiesByBranch = Amenity::withoutGlobalScopes()
+            ->whereIn('branch_id', $availableBranchIds)
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get(['id', 'branch_id', 'name', 'icon_type', 'icon_value', 'category', 'color'])
+            ->groupBy('branch_id');
         $branches = $branches
             ->whereIn('id', $availableBranchIds)
             ->map(fn (Branch $branch): array => [
@@ -129,8 +138,27 @@ class CustomerPortalController extends Controller
                 'email' => $branch->email,
                 'cover_image' => $this->publicImageUrl($branch->cover_image),
                 'star_rating' => $branch->star_rating,
+                'latitude' => $branch->latitude,
+                'longitude' => $branch->longitude,
+                'google_embed_url' => $branch->google_embed_url,
+                'map_zoom_level' => $branch->map_zoom_level,
                 'currency' => $branch->currency,
                 'amenities' => $branch->amenities ?? [],
+                'facilities' => $facilitiesByBranch
+                    ->get($branch->id, collect())
+                    ->map(fn (Amenity $amenity): array => [
+                        'id' => $amenity->id,
+                        'name' => $amenity->name,
+                        'icon_type' => $amenity->icon_type,
+                        'icon_value' => $amenity->icon_value,
+                        'icon_url' => in_array($amenity->icon_type, ['image', 'svg'], true)
+                            ? $this->publicImageUrl($amenity->icon_value)
+                            : null,
+                        'category' => $amenity->category,
+                        'color' => $amenity->color,
+                    ])
+                    ->values()
+                    ->all(),
                 'available_rooms' => $units->where('branch_id', $branch->id)->count(),
                 'lowest_price' => $units
                     ->where('branch_id', $branch->id)
@@ -142,12 +170,15 @@ class CustomerPortalController extends Controller
             'units' => $units->map(fn (Unit $unit): array => [
                 'id' => $unit->id,
                 'branch_id' => $unit->branch_id,
+                'unit_type' => $unit->unit_type,
                 'number' => $unit->number,
                 'name' => $unit->name,
+                'floor' => $unit->floor,
                 'base_price' => $unit->base_price,
                 'price_weekend' => $unit->price_weekend,
                 'capacity' => $unit->capacity,
                 'amenities' => $unit->amenities ?? [],
+                'status' => $unit->status,
                 'images' => collect($unit->images ?? [])
                     ->map(fn (string $image): string => $this->publicImageUrl($image))
                     ->filter()
