@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Support\Facades\Storage;
 use Laravel\Cashier\Billable;
 use Spatie\Multitenancy\Models\Tenant as BaseTenant;
 
@@ -100,11 +99,57 @@ class Tenant extends BaseTenant
     {
         return [
             'name' => $this->name,
-            'logo' => $this->logo ? Storage::disk('s3')->url($this->logo) : null,
+            'logo' => $this->logoUrl(),
             'primaryColor' => $this->primary_color ?: '#0f766e',
             'secondaryColor' => $this->secondary_color ?: '#d97706',
             'customDomain' => $this->custom_domain,
             'whiteLabel' => $this->planRelation?->white_label === true,
         ];
+    }
+
+    private function logoUrl(): ?string
+    {
+        if (! filled($this->logo)) {
+            return null;
+        }
+
+        if (filter_var($this->logo, FILTER_VALIDATE_URL)) {
+            return $this->logo;
+        }
+
+        $disk = config('filesystems.disks.s3', []);
+        $path = implode('/', array_map('rawurlencode', explode('/', ltrim($this->logo, '/'))));
+        $baseUrl = $disk['url'] ?? null;
+
+        if (filled($baseUrl)) {
+            return rtrim((string) $baseUrl, '/').'/'.$path;
+        }
+
+        $bucket = $disk['bucket'] ?? null;
+        $region = $disk['region'] ?? null;
+        $endpoint = $disk['endpoint'] ?? null;
+
+        if (filled($endpoint) && filled($bucket)) {
+            $baseUrl = rtrim((string) $endpoint, '/');
+            if ($disk['use_path_style_endpoint'] ?? false) {
+                return $baseUrl.'/'.rawurlencode((string) $bucket).'/'.$path;
+            }
+
+            $endpointParts = parse_url($baseUrl);
+            if ($endpointParts !== false && isset($endpointParts['host'])) {
+                $scheme = $endpointParts['scheme'] ?? 'https';
+                $port = isset($endpointParts['port']) ? ':'.$endpointParts['port'] : '';
+                $baseUrl = $scheme.'://'.$bucket.'.'.$endpointParts['host'].$port
+                    .($endpointParts['path'] ?? '');
+
+                return rtrim($baseUrl, '/').'/'.$path;
+            }
+        }
+
+        if (filled($bucket) && filled($region)) {
+            return 'https://'.$bucket.'.s3.'.$region.'.amazonaws.com/'.$path;
+        }
+
+        return asset('storage/'.$path);
     }
 }

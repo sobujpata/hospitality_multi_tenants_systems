@@ -11,6 +11,7 @@ use Illuminate\Notifications\Notifiable;
     'tenant_id', 'name', 'email', 'phone', 'nationality', 'id_type', 'id_number',
     'date_of_birth', 'gender', 'address', 'tags', 'loyalty_points', 'vip_level',
     'notes', 'source', 'blacklisted', 'blacklist_reason', 'documents',
+    'arrived_from', 'occupation', 'organization', 'purpose_of_visit',
     'password', 'oauth_provider', 'oauth_id', 'email_verified_at',
 ])]
 class Customer extends Authenticatable

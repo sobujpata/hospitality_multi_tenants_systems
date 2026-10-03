@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Amenity;
 use App\Models\Booking;
 use App\Models\BookingModificationRequest;
 use App\Models\Branch;
@@ -16,6 +15,7 @@ use App\Notifications\ReviewRequestNotification;
 use App\Services\BookingConflictDetectionService;
 use App\Services\PriceCalculator;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -30,28 +30,228 @@ class CustomerPortalController extends Controller
     public function dashboard(): Response
     {
         $customer = $this->customer();
-        $bookings = Booking::withoutGlobalScopes()
-            ->with([
-                'branch' => fn ($query) => $query->withoutGlobalScopes()->select(['id', 'name']),
-                'unit' => fn ($query) => $query->withoutGlobalScopes()->select(['id', 'name', 'number']),
-                'rooms' => fn ($query) => $query->withoutGlobalScopes()->select(['units.id', 'units.name', 'units.number']),
-            ])
+        Booking::withoutGlobalScopes()
+            ->with('customer')
             ->where('customer_id', $customer->id)
-            ->latest('check_in')
-            ->get();
-        $bookings->where('status', 'completed')->where('check_out', '<', now()->toDateString())->each(function (Booking $booking): void {
-            if ($booking->review_requested_at === null) {
+            ->where('status', 'completed')
+            ->where('check_out', '<', now()->toDateString())
+            ->whereNull('review_requested_at')
+            ->get()
+            ->each(function (Booking $booking): void {
                 $booking->customer->notify(new ReviewRequestNotification($booking));
                 $booking->update(['review_requested_at' => now()]);
-            }
-        });
+            });
+
+        $bookings = $this->portalBookingsQuery($customer)
+            ->latest('check_in')
+            ->paginate(10)
+            ->withQueryString()
+            ->through(fn (Booking $booking): array => $this->presentPortalBooking($booking));
 
         return Inertia::render('portal/dashboard', [
             'customer' => $customer,
-            'upcomingBookings' => $bookings->whereIn('status', ['pending', 'confirmed'])->where('check_out', '>=', now()->toDateString())->values(),
-            'pastBookings' => $bookings->where('check_out', '<', now()->toDateString())->values(),
+            'bookings' => $bookings,
             'loyaltyPoints' => $customer->loyalty_points,
         ]);
+    }
+
+    public function showBooking(int $booking): Response
+    {
+        $customer = $this->customer();
+        $booking = $this->portalBookingsQuery($customer, true)->findOrFail($booking);
+
+        return Inertia::render('portal/booking-detail', [
+            'booking' => $this->presentPortalBooking($booking, true),
+            'customerId' => $customer->id,
+            'customerName' => $customer->name,
+            'hasExistingReview' => Review::withoutGlobalScopes()
+                ->where('tenant_id', $booking->tenant_id)
+                ->where('booking_id', $booking->id)
+                ->where('customer_id', $customer->id)
+                ->exists(),
+        ]);
+    }
+
+    private function portalBookingsQuery(Customer $customer, bool $includeDetails = false): Builder
+    {
+        $relations = [
+            'branch' => fn ($query) => $query->withoutGlobalScopes()->select($includeDetails
+                ? [
+                    'id', 'name', 'type', 'city', 'address', 'phone', 'email', 'cover_image',
+                    'star_rating', 'amenities', 'latitude', 'longitude', 'google_maps_url',
+                    'google_embed_url',
+                ]
+                : ['id', 'name', 'type', 'city', 'address', 'cover_image', 'star_rating']),
+            'unit' => fn ($query) => $query->withoutGlobalScopes()->select($includeDetails
+                ? [
+                    'id', 'name', 'number', 'unit_type', 'floor', 'unit_category_id',
+                    'capacity', 'child_capacity', 'images', 'amenities',
+                ]
+                : ['id', 'name', 'number', 'unit_type', 'floor', 'unit_category_id']),
+            'unit.category' => fn ($query) => $query->withoutGlobalScopes()->select(['id', 'name']),
+        ];
+
+        if ($includeDetails) {
+            $relations['folioItems'] = fn ($query) => $query->withoutGlobalScopes()
+                ->select([
+                    'id', 'booking_id', 'description', 'quantity', 'unit_price',
+                    'tax_rate', 'item_type',
+                ]);
+            $relations['payments'] = fn ($query) => $query->withoutGlobalScopes()->select([
+                'id', 'booking_id', 'amount', 'method', 'paid_at', 'created_at',
+            ]);
+        } else {
+            $relations['folioItems'] = fn ($query) => $query->withoutGlobalScopes()
+                ->where('item_type', 'extra')
+                ->select(['id', 'booking_id', 'description', 'unit_price', 'item_type']);
+        }
+
+        return Booking::withoutGlobalScopes()
+            ->with($relations)
+            ->where('customer_id', $customer->id);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function presentPortalBooking(Booking $booking, bool $includeDetails = false): array
+    {
+        $checkIn = Carbon::parse($booking->check_in);
+        $checkOut = Carbon::parse($booking->check_out);
+        $branch = $booking->branch;
+        $unit = $booking->unit;
+        $folioItems = $booking->relationLoaded('folioItems') ? $booking->folioItems : collect();
+
+        $presented = [
+            'id' => $booking->id,
+            'branch_id' => $booking->branch_id,
+            'booking_ref' => $booking->booking_ref ?? $booking->booking_reference,
+            'status' => $booking->status,
+            'check_in' => $checkIn->toDateString(),
+            'check_out' => $checkOut->toDateString(),
+            'nights' => (int) $checkIn->diffInDays($checkOut),
+            'adults' => $booking->adults,
+            'children' => $booking->children,
+            'total_amount' => (float) $booking->total_amount,
+            'currency' => $booking->currency,
+            'created_at' => $booking->created_at?->toISOString(),
+            'qr_code' => $booking->qr_code,
+            'branch' => [
+                'id' => $branch?->id,
+                'name' => $branch?->name ?? 'Property',
+                'type' => $branch?->type ?? '',
+                'city' => $branch?->city ?? '',
+                'address_line1' => $branch?->address,
+                'address_line2' => null,
+                'cover_image' => $this->publicImageUrl($branch?->cover_image),
+                'star_rating' => $branch?->star_rating ?? 0,
+            ],
+            'unit' => [
+                'name' => $unit?->name ?? 'Unit',
+                'number' => $unit?->number ?? '',
+                'unit_type' => $unit?->unit_type ?? '',
+                'floor' => is_numeric($unit?->floor) ? (int) $unit->floor : null,
+            ],
+            'unit_category' => [
+                'name' => $unit?->category?->name ?? '',
+            ],
+            'extras' => $folioItems
+                ->where('item_type', 'extra')
+                ->map(fn ($item): array => [
+                    'name' => $item->description,
+                    'price' => (float) $item->unit_price,
+                ])
+                ->values()
+                ->all(),
+        ];
+
+        if ($includeDetails) {
+            $presented['qr_code_url'] = $booking->qr_code && (
+                filter_var($booking->qr_code, FILTER_VALIDATE_URL) ||
+                str_contains($booking->qr_code, '/')
+            )
+                ? $this->publicImageUrl($booking->qr_code)
+                : null;
+            $presented['barcode_value'] = $booking->booking_ref ?? $booking->booking_reference;
+            $presented['invoice_url'] = url('/bookings/'.$booking->id.'/invoice/download');
+            $presented['cancellation_policy'] = (string) data_get(
+                Tenant::current()?->settings,
+                'booking.cancellation_policy',
+                '',
+            );
+            $presented['branch'] = [
+                ...$presented['branch'],
+                'phone' => $branch?->phone,
+                'email' => $branch?->email,
+                'website' => null,
+                'google_maps_url' => $branch?->google_maps_url === '#'
+                    ? null
+                    : $branch?->google_maps_url,
+                'latitude' => $branch?->latitude,
+                'longitude' => $branch?->longitude,
+                'google_embed_url' => $branch?->google_embed_url,
+                'amenities' => $this->presentAmenities($branch?->amenities ?? []),
+            ];
+            $presented['unit'] = [
+                ...$presented['unit'],
+                'capacity' => $unit?->capacity ?? 0,
+                'child_capacity' => $unit?->child_capacity ?? 0,
+                'images' => collect($unit?->images ?? [])
+                    ->map(fn ($image): ?string => is_string($image) ? $this->publicImageUrl($image) : null)
+                    ->filter()
+                    ->values()
+                    ->all(),
+                'amenities' => $this->presentAmenities($unit?->amenities ?? []),
+            ];
+            $presented['folio_items'] = $folioItems
+                ->map(fn ($item): array => [
+                    'description' => $item->description,
+                    'quantity' => (float) $item->quantity,
+                    'unit_price' => (float) $item->unit_price,
+                    'tax_rate' => (float) $item->tax_rate,
+                    'item_type' => $item->item_type,
+                ])
+                ->values()
+                ->all();
+            $presented['payments'] = $booking->payments
+                ->map(fn ($payment): array => [
+                    'amount' => (float) $payment->amount,
+                    'method' => $payment->method,
+                    'status' => $payment->paid_at ? 'paid' : 'pending',
+                    'created_at' => $payment->created_at?->toISOString(),
+                ])
+                ->values()
+                ->all();
+        }
+
+        return $presented;
+    }
+
+    /**
+     * @param  array<int, mixed>  $amenities
+     * @return array<int, array{name: string, icon: string, color: string}>
+     */
+    private function presentAmenities(array $amenities): array
+    {
+        return collect($amenities)
+            ->map(function ($amenity): ?array {
+                if (is_string($amenity)) {
+                    return ['name' => $amenity, 'icon' => 'sparkles', 'color' => 'teal'];
+                }
+
+                if (! is_array($amenity) || ! is_string($amenity['name'] ?? null)) {
+                    return null;
+                }
+
+                return [
+                    'name' => $amenity['name'],
+                    'icon' => is_string($amenity['icon'] ?? null) ? $amenity['icon'] : 'sparkles',
+                    'color' => is_string($amenity['color'] ?? null) ? $amenity['color'] : 'teal',
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
     }
 
     public function createBooking(Request $request): Response
@@ -76,6 +276,7 @@ class CustomerPortalController extends Controller
             'adults' => ['nullable', 'integer', 'min:1'],
             'children' => ['nullable', 'integer', 'min:0'],
             'special_requests' => ['nullable', 'string', 'max:2000'],
+            'step' => ['nullable', 'in:details'],
         ]);
         $hasDates = isset($data['check_in'], $data['check_out']);
         $location = trim($data['location'] ?? '');
@@ -114,17 +315,10 @@ class CustomerPortalController extends Controller
             ->orderBy('base_price')
             ->get([
                 'id', 'branch_id', 'unit_type', 'number', 'name', 'floor',
-                'base_price', 'price_weekend', 'capacity', 'amenities', 'images',
+                'base_price', 'price_weekend', 'capacity', 'child_capacity', 'amenities', 'images',
                 'status', 'unit_category_id',
             ]);
         $availableBranchIds = $units->pluck('branch_id')->unique()->all();
-        $facilitiesByBranch = Amenity::withoutGlobalScopes()
-            ->whereIn('branch_id', $availableBranchIds)
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->orderBy('name')
-            ->get(['id', 'branch_id', 'name', 'icon_type', 'icon_value', 'category', 'color'])
-            ->groupBy('branch_id');
         $branches = $branches
             ->whereIn('id', $availableBranchIds)
             ->map(fn (Branch $branch): array => [
@@ -143,22 +337,6 @@ class CustomerPortalController extends Controller
                 'google_embed_url' => $branch->google_embed_url,
                 'map_zoom_level' => $branch->map_zoom_level,
                 'currency' => $branch->currency,
-                'amenities' => $branch->amenities ?? [],
-                'facilities' => $facilitiesByBranch
-                    ->get($branch->id, collect())
-                    ->map(fn (Amenity $amenity): array => [
-                        'id' => $amenity->id,
-                        'name' => $amenity->name,
-                        'icon_type' => $amenity->icon_type,
-                        'icon_value' => $amenity->icon_value,
-                        'icon_url' => in_array($amenity->icon_type, ['image', 'svg'], true)
-                            ? $this->publicImageUrl($amenity->icon_value)
-                            : null,
-                        'category' => $amenity->category,
-                        'color' => $amenity->color,
-                    ])
-                    ->values()
-                    ->all(),
                 'available_rooms' => $units->where('branch_id', $branch->id)->count(),
                 'lowest_price' => $units
                     ->where('branch_id', $branch->id)
@@ -177,6 +355,7 @@ class CustomerPortalController extends Controller
                 'base_price' => $unit->base_price,
                 'price_weekend' => $unit->price_weekend,
                 'capacity' => $unit->capacity,
+                'child_capacity' => $unit->child_capacity,
                 'amenities' => $unit->amenities ?? [],
                 'status' => $unit->status,
                 'images' => collect($unit->images ?? [])
@@ -194,15 +373,10 @@ class CustomerPortalController extends Controller
             'selectedUnitIds' => collect($data['unit_ids'] ?? [])
                 ->map(fn (int $unitId): int => $unitId)
                 ->values(),
-            'selectedRoomGuestNames' => collect($data['room_guest_names'] ?? [])
-                ->map(fn (array $names): array => collect($names)->values()->all()),
-            'selectedExtras' => collect($data['extras'] ?? [])
-                ->intersect($branches->firstWhere('id', $data['branch_id'] ?? null)['amenities'] ?? [])
-                ->values()
-                ->all(),
             'adults' => $data['adults'] ?? 1,
             'children' => $data['children'] ?? 0,
-            'specialRequests' => $data['special_requests'] ?? '',
+            'step' => $data['step'] ?? 'selection',
+            'customerDetails' => $this->bookingCustomerDetails(),
             'isAuthenticated' => auth('customer')->check(),
         ]);
     }
@@ -221,6 +395,19 @@ class CustomerPortalController extends Controller
             'check_out' => ['required', 'date', 'after:check_in'],
             'adults' => ['nullable', 'integer', 'min:1'],
             'children' => ['nullable', 'integer', 'min:0'],
+            'customer_details' => ['required', 'array'],
+            'customer_details.name' => ['required', 'string', 'max:255'],
+            'customer_details.email' => ['required', 'email', 'max:255'],
+            'customer_details.phone' => ['required', 'string', 'max:50'],
+            'customer_details.date_of_birth' => ['nullable', 'date', 'before_or_equal:today'],
+            'customer_details.gender' => ['nullable', 'in:male,female,other'],
+            'customer_details.arrived_from' => ['required', 'string', 'max:255'],
+            'customer_details.nationality' => ['required', 'string', 'max:100'],
+            'customer_details.nid' => ['nullable', 'string', 'max:100'],
+            'customer_details.occupation' => ['nullable', 'string', 'max:255'],
+            'customer_details.organization' => ['nullable', 'string', 'max:255'],
+            'customer_details.mailing_address' => ['required', 'string', 'max:2000'],
+            'customer_details.purpose_of_visit' => ['nullable', 'in:tourist,business,official,others'],
             'promo_code' => ['nullable', 'string', 'max:50'],
             'extras' => ['nullable', 'array'],
             'extras.*' => ['string', 'max:255'],
@@ -249,13 +436,20 @@ class CustomerPortalController extends Controller
             ]);
         }
 
-        $guestCount = $data['adults'] + $data['children'];
-        if ($guestCount > $units->sum('capacity')) {
+        if ($data['adults'] > $units->sum('capacity')) {
             throw ValidationException::withMessages([
-                'adults' => 'The selected rooms do not have enough guest capacity.',
+                'adults' => 'The selected rooms do not have enough adult capacity.',
+            ]);
+        }
+        if ($data['children'] > $units->sum('child_capacity')) {
+            throw ValidationException::withMessages([
+                'children' => 'The selected rooms do not have enough child capacity.',
             ]);
         }
 
+        $customer = $this->customer();
+        $customerDetails = $data['customer_details'];
+        $guestCount = $data['adults'] + $data['children'];
         $guestNamesByRoom = collect($data['room_guest_names'] ?? [])
             ->map(fn (array $names): array => collect($names)
                 ->map(fn (string $name): string => trim($name))
@@ -292,7 +486,7 @@ class CustomerPortalController extends Controller
             'quantity' => 1,
             'item_type' => 'extra',
         ])->all();
-        $booking = DB::transaction(function () use ($data, $unitIds, $guestNamesByRoom, $branch, $conflicts, $calculator, $pricedExtras): Booking {
+        $booking = DB::transaction(function () use ($data, $customer, $customerDetails, $unitIds, $guestNamesByRoom, $branch, $conflicts, $calculator, $pricedExtras): Booking {
             $roomPricing = [];
             foreach ($unitIds as $index => $unitId) {
                 $conflicts->assertAvailable($unitId, $data['check_in'], $data['check_out']);
@@ -313,6 +507,27 @@ class CustomerPortalController extends Controller
             ];
             $calculator->consumePromoCode($data['promo_code'] ?? null, Carbon::parse($data['check_in']));
 
+            $customerProfile = [
+                'name' => $customerDetails['name'],
+                'email' => $customerDetails['email'],
+                'phone' => $customerDetails['phone'],
+                'date_of_birth' => $customerDetails['date_of_birth'] ?? null,
+                'gender' => $customerDetails['gender'] ?? null,
+                'nationality' => $customerDetails['nationality'],
+                'arrived_from' => $customerDetails['arrived_from'],
+                'occupation' => $customerDetails['occupation'] ?? null,
+                'organization' => $customerDetails['organization'] ?? null,
+                'purpose_of_visit' => $customerDetails['purpose_of_visit'] ?? null,
+                'address' => array_merge($customer->address ?? [], [
+                    'line1' => $customerDetails['mailing_address'],
+                ]),
+            ];
+            if (filled($customerDetails['nid'] ?? null)) {
+                $customerProfile['id_type'] = 'nid';
+                $customerProfile['id_number'] = $customerDetails['nid'];
+            }
+            $customer->update($customerProfile);
+
             $booking = Booking::create([
                 'branch_id' => $branch->id,
                 'unit_id' => $unitIds->first(),
@@ -322,7 +537,7 @@ class CustomerPortalController extends Controller
                 'children' => $data['children'],
                 'special_requests' => $data['special_requests'] ?? null,
                 'tenant_id' => $branch->tenant_id,
-                'customer_id' => $this->customer()->id,
+                'customer_id' => $customer->id,
                 'type' => 'online',
                 'status' => 'pending',
                 'source' => 'customer_portal',
@@ -367,6 +582,31 @@ class CustomerPortalController extends Controller
         $booking->customer->notify(new BookingConfirmationNotification($booking));
 
         return redirect('/portal')->with('status', 'Booking request submitted.');
+    }
+
+    /**
+     * @return array{name: string, email: string, phone: string, date_of_birth: string, gender: string, arrived_from: string, nationality: string, nid: string, occupation: string, organization: string, mailing_address: string, purpose_of_visit: string}
+     */
+    private function bookingCustomerDetails(): array
+    {
+        $customer = auth('customer')->user();
+        $address = $customer?->address ?? [];
+        $gender = strtolower($customer?->gender ?? '');
+
+        return [
+            'name' => $customer?->name ?? '',
+            'email' => $customer?->email ?? '',
+            'phone' => $customer?->phone ?? '',
+            'date_of_birth' => $customer?->date_of_birth?->format('Y-m-d') ?? '',
+            'gender' => in_array($gender, ['male', 'female', 'other'], true) ? $gender : '',
+            'arrived_from' => $customer?->arrived_from ?? '',
+            'nationality' => $customer?->nationality ?? '',
+            'nid' => $customer?->id_type === 'nid' ? ($customer->id_number ?? '') : '',
+            'occupation' => $customer?->occupation ?? '',
+            'organization' => $customer?->organization ?? '',
+            'mailing_address' => $address['line1'] ?? '',
+            'purpose_of_visit' => $customer?->purpose_of_visit ?? '',
+        ];
     }
 
     public function modification(Request $request, Booking $booking): RedirectResponse

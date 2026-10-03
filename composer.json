@@ -22,6 +22,7 @@
         "laravel/tinker": "^3.0",
         "laravel/wayfinder": "^0.1.14",
         "maatwebsite/excel": "4.0",
+        "milon/barcode": "^13.5",
         "pragmarx/google2fa-laravel": "^3.0",
         "spatie/laravel-multitenancy": "^4.2",
         "spatie/laravel-permission": "^8.3"

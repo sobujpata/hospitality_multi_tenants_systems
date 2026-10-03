@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\CustomerAuthController;
 use App\Http\Controllers\CustomerPortalController;
+use App\Http\Controllers\InvoiceController;
 use App\Models\Branch;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -24,6 +25,14 @@ Route::get('register', [CustomerAuthController::class, 'showRegister'])
 Route::post('register', [CustomerAuthController::class, 'register'])
     ->name('central.customer.register.store');
 Route::get('portal/book', [CustomerPortalController::class, 'createBooking'])->name('central.portal.book');
+Route::get('bookings/{booking}/invoice/download', [InvoiceController::class, 'download'])
+    ->whereNumber('booking')
+    ->middleware(['auth:customer', 'initialize.customer.tenant'])
+    ->name('bookings.invoice.download');
+Route::get('bookings/{booking}', [CustomerPortalController::class, 'showBooking'])
+    ->whereNumber('booking')
+    ->middleware('auth:customer')
+    ->name('central.booking.show');
 Route::middleware('auth:customer')->prefix('portal')->group(function (): void {
     Route::get('/', [CustomerPortalController::class, 'dashboard'])->name('central.portal.dashboard');
     Route::post('book', [CustomerPortalController::class, 'storeBooking'])->name('central.portal.book.store');

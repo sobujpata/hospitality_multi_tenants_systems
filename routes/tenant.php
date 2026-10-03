@@ -1,9 +1,10 @@
 <?php
 
-use App\Http\Controllers\BillingController;
 use App\Http\Controllers\AmenityController;
+use App\Http\Controllers\BillingController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\BranchController;
+use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\NotificationController;
@@ -54,6 +55,8 @@ Route::domain('{tenant?}.'.env('APP_DOMAIN', 'localhost'))
 
         Route::middleware(['auth', 'billing.access'])->group(function (): void {
             Route::get('dashboard', DashboardController::class)->name('dashboard');
+            Route::get('inbox', [ConversationController::class, 'inbox'])
+                ->name('inbox.index');
             Route::get('bookings/timeline', [BookingController::class, 'index'])->name('bookings.timeline');
             Route::get('bookings/availability', [BookingController::class, 'availability'])->name('bookings.availability');
             Route::get('channels', [BookingController::class, 'channels'])
@@ -113,6 +116,7 @@ Route::domain('{tenant?}.'.env('APP_DOMAIN', 'localhost'))
             Route::delete('amenities/{amenity}', [AmenityController::class, 'destroy'])->name('amenities.destroy');
             Route::get('customers', [CustomerController::class, 'index'])->name('customers.index');
             Route::post('customers', [CustomerController::class, 'store'])->name('customers.store');
+            Route::post('customers/walk-in-booking', [CustomerController::class, 'storeWalkInBooking'])->name('customers.walk-in-booking');
             Route::get('customers/{customer}', [CustomerController::class, 'show'])->name('customers.show');
             Route::put('customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
             Route::post('customers/{customer}/documents', [CustomerController::class, 'uploadDocument'])->name('customers.documents');

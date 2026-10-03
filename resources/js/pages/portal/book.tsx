@@ -1,31 +1,20 @@
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import {
-    AirVent,
     ArrowLeft,
     ArrowRight,
-    BellRing,
-    CarFront,
     Check,
     ChevronDown,
-    Coffee,
-    Croissant,
-    Dumbbell,
-    GlassWater,
-    Headset,
     Info,
     MapPin,
     Minus,
     Phone,
     Plus,
-    ShowerHead,
-    Sparkles,
-    Tv,
-    Utensils,
-    Wifi,
     Users,
-    type LucideIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { ChatBubbleLeftRightIcon, PaperAirplaneIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import Echo from 'laravel-echo';
+import Pusher from 'pusher-js';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
     Dialog,
@@ -36,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import AppLayoutHome from '@/layouts/app-layout-home';
+import MessageBubble, { formatMessageDate, groupMessagesByDate, type MessageBubbleData } from '@/components/MessageBubble';
 
 type Branch = {
     id: number;
@@ -53,20 +43,8 @@ type Branch = {
     google_embed_url: string | null;
     map_zoom_level: number;
     currency: string;
-    amenities: string[];
-    facilities: Facility[];
     available_rooms: number;
     lowest_price: string | null;
-};
-
-type Facility = {
-    id: number;
-    name: string;
-    icon_type: string;
-    icon_value: string;
-    icon_url: string | null;
-    category: string;
-    color: string;
 };
 
 type Unit = {
@@ -79,6 +57,7 @@ type Unit = {
     base_price: string;
     price_weekend: string | null;
     capacity: number;
+    child_capacity: number | null;
     amenities: string[];
     images: string[];
     category: string | null;
@@ -94,13 +73,29 @@ type Props = {
     selectedBranchId: number | null;
     selectedUnitId: number | null;
     selectedUnitIds?: number[];
-    selectedRoomGuestNames?: Record<number, string[]>;
-    selectedExtras: string[];
     adults: number;
     children: number;
-    specialRequests: string;
+    step: string;
+    customerDetails: CustomerDetails;
     isAuthenticated: boolean;
 };
+
+type CustomerDetails = {
+    name: string;
+    email: string;
+    phone: string;
+    date_of_birth: string;
+    gender: string;
+    arrived_from: string;
+    nationality: string;
+    nid: string;
+    occupation: string;
+    organization: string;
+    mailing_address: string;
+    purpose_of_visit: string;
+};
+
+type BookingStep = 'selection' | 'details' | 'preview';
 
 const today = new Date().toISOString().slice(0, 10);
 const roomPhotoFallbacks = [
@@ -108,32 +103,6 @@ const roomPhotoFallbacks = [
     'https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=800&q=85',
     'https://images.unsplash.com/photo-1631049307264-da0ec9d70304?auto=format&fit=crop&w=800&q=85',
 ];
-const facilityIcons: Record<string, LucideIcon> = {
-    airvent: AirVent,
-    bellring: BellRing,
-    carfront: CarFront,
-    coffee: Coffee,
-    croissant: Croissant,
-    dumbbell: Dumbbell,
-    glasswater: GlassWater,
-    headset: Headset,
-    phone: Phone,
-    showerhead: ShowerHead,
-    sparkles: Sparkles,
-    tv: Tv,
-    utensils: Utensils,
-    wifi: Wifi,
-};
-
-function facilityIcon(iconValue: string): LucideIcon {
-    const normalizedName = iconValue
-        .replace(/[^a-z0-9]/gi, '')
-        .toLowerCase()
-        .replace(/^heroicons?o?/, '');
-
-    return facilityIcons[normalizedName] ?? Sparkles;
-}
-
 function categoryAnchor(name: string): string {
     return `room-category-${name
         .toLowerCase()
@@ -174,14 +143,16 @@ export default function Book({
     selectedBranchId,
     selectedUnitId,
     selectedUnitIds: initialSelectedUnitIds = [],
-    selectedRoomGuestNames: initialSelectedRoomGuestNames = {},
-    selectedExtras,
     adults: initialAdults,
     children: initialChildren,
-    specialRequests: initialSpecialRequests,
+    step: initialStep,
+    customerDetails: initialCustomerDetails,
     isAuthenticated,
 }: Props) {
     const page = usePage();
+    const customer = (page.props as typeof page.props & {
+        auth?: { customer?: { id: number; name: string } | null };
+    }).auth?.customer;
     const errors = (
         page.props as typeof page.props & { errors?: Record<string, string> }
     ).errors ?? {};
@@ -196,14 +167,6 @@ export default function Book({
               ? [selectedUnitId]
               : [],
     );
-    const [roomGuestNames, setRoomGuestNames] = useState<Record<number, string>>(
-        Object.fromEntries(
-            Object.entries(initialSelectedRoomGuestNames).map(([unitId, names]) => [
-                Number(unitId),
-                names.join('\n'),
-            ]),
-        ),
-    );
     const [expandedCategoryDetails, setExpandedCategoryDetails] = useState<
         Record<string, boolean>
     >({});
@@ -211,11 +174,14 @@ export default function Book({
     const [selectedRoomCategory, setSelectedRoomCategory] = useState<string | null>(
         null,
     );
-    const [extras, setExtras] = useState<string[]>(selectedExtras);
     const [adults, setAdults] = useState(Math.max(1, initialAdults));
     const [children, setChildren] = useState(Math.max(0, initialChildren));
-    const [specialRequests, setSpecialRequests] = useState(initialSpecialRequests);
     const [detailsUnit, setDetailsUnit] = useState<Unit | null>(null);
+    const [bookingStep, setBookingStep] = useState<BookingStep>(
+        initialStep === 'details' && isAuthenticated ? 'details' : 'selection',
+    );
+    const [customerDetails, setCustomerDetails] =
+        useState<CustomerDetails>(initialCustomerDetails);
 
     const branch = branches.find((item) => item.id === branchId);
     const branchUnits = units.filter((unit) => unit.branch_id === branchId);
@@ -234,7 +200,12 @@ export default function Book({
     const selectedUnits = selectedUnitIds
         .map((unitId) => branchUnits.find((unit) => unit.id === unitId))
         .filter((unit): unit is Unit => Boolean(unit));
-    const capacity = selectedUnits.reduce((total, unit) => total + unit.capacity, 0);
+    const adultCapacity = selectedUnits.reduce((total, unit) => total + unit.capacity, 0);
+    const childCapacity = selectedUnits.reduce(
+        (total, unit) => total + (unit.child_capacity ?? 0),
+        0,
+    );
+    const hasCapacityForGuests = adults <= adultCapacity && children <= childCapacity;
     const currency = branch?.currency ?? 'USD';
     const roomPrice = (unit: Unit): number => {
         let total = 0;
@@ -255,13 +226,16 @@ export default function Book({
         (total, unit) => total + roomPrice(unit),
         0,
     );
-    const additionalGuestCount = selectedUnits
-        .flatMap((unit) => (roomGuestNames[unit.id] ?? '').split(/[\n,]+/))
-        .filter((name) => name.trim()).length;
     const availableCategories = useMemo(() => {
         const categoryMap = new Map<
             string,
-            { name: string; units: Unit[]; lowestPrice: number; capacity: number }
+            {
+                name: string;
+                units: Unit[];
+                lowestPrice: number;
+                capacity: number;
+                child_capacity: number;
+            }
         >();
 
         for (const unit of branchUnits) {
@@ -271,10 +245,15 @@ export default function Book({
                 units: [],
                 lowestPrice: Number.POSITIVE_INFINITY,
                 capacity: 0,
+                child_capacity: 0,
             };
             category.units.push(unit);
             category.lowestPrice = Math.min(category.lowestPrice, Number(unit.base_price));
             category.capacity = Math.max(category.capacity, unit.capacity);
+            category.child_capacity = Math.max(
+                category.child_capacity,
+                unit.child_capacity ?? 0,
+            );
             categoryMap.set(name, category);
         }
 
@@ -308,16 +287,9 @@ export default function Book({
         branch_id: String(branchId),
         adults: String(adults),
         children: String(children),
-        special_requests: specialRequests,
+        step: 'details',
     });
     selectedUnitIds.forEach((unitId) => loginParams.append('unit_ids[]', String(unitId)));
-    for (const [unitId, names] of Object.entries(roomGuestNames)) {
-        if (selectedUnitIds.includes(Number(unitId))) {
-            names.split(/[\n,]+/).map((name) => name.trim()).filter(Boolean).forEach((name) => {
-                loginParams.append(`room_guest_names[${unitId}][]`, name);
-            });
-        }
-    }
     const loginUrl = `/login?redirect=${encodeURIComponent(`/portal/book?${loginParams.toString()}`)}`;
 
     const search = (event: React.FormEvent<HTMLFormElement>) => {
@@ -345,41 +317,333 @@ export default function Book({
         }
     };
 
+    const proceedToBook = () => {
+        if (!isAuthenticated) {
+            window.location.assign(new URL(loginUrl, window.location.origin).toString());
+            return;
+        }
+
+        router.get(
+            '/portal/book',
+            {
+                check_in: checkIn,
+                check_out: checkOut,
+                location,
+                branch_id: branchId,
+                unit_ids: selectedUnitIds,
+                adults,
+                children,
+                step: 'details',
+            },
+            {
+                preserveState: true,
+                onSuccess: () => setBookingStep('details'),
+            },
+        );
+    };
+
+    const returnToRoomSelection = () => {
+        router.get(
+            '/portal/book',
+            {
+                check_in: checkIn,
+                check_out: checkOut,
+                location,
+                branch_id: branchId,
+                unit_ids: selectedUnitIds,
+                adults,
+                children,
+            },
+            {
+                preserveState: true,
+                onSuccess: () => setBookingStep('selection'),
+            },
+        );
+    };
+
+    const updateCustomerDetails = (field: keyof CustomerDetails, value: string) => {
+        setCustomerDetails((current) => ({ ...current, [field]: value }));
+    };
+
     const confirmBooking = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (!branch || selectedUnits.length === 0 || !checkIn || !checkOut) {
             return;
         }
-        if (totalGuests > capacity) {
+        if (adults > adultCapacity || children > childCapacity) {
             return;
         }
 
-        const loginUrlWithSelection = new URL(loginUrl, window.location.origin);
         if (!isAuthenticated) {
-            window.location.assign(loginUrlWithSelection.toString());
+            window.location.assign(new URL(loginUrl, window.location.origin).toString());
             return;
         }
 
         router.post('/portal/book', {
             branch_id: branch.id,
             unit_ids: selectedUnits.map((unit) => unit.id),
-            room_guest_names: Object.fromEntries(
-                selectedUnits.map((unit) => [
-                    unit.id,
-                    (roomGuestNames[unit.id] ?? '')
-                        .split(/[\n,]+/)
-                        .map((name) => name.trim())
-                        .filter(Boolean),
-                ]),
-            ),
             check_in: checkIn,
             check_out: checkOut,
             adults,
             children,
-            extras,
-            special_requests: specialRequests,
+            customer_details: customerDetails,
+        }, {
+            onError: () => setBookingStep('details'),
         });
     };
+
+    if (bookingStep === 'details' || bookingStep === 'preview') {
+        const customerFields: {
+            field: keyof CustomerDetails;
+            label: string;
+            required?: boolean;
+            type?: string;
+        }[] = [
+            { field: 'name', label: 'Full name', required: true },
+            { field: 'email', label: 'Email address', required: true, type: 'email' },
+            { field: 'phone', label: 'Contact number', required: true, type: 'tel' },
+            { field: 'arrived_from', label: 'Arrived from', required: true },
+            { field: 'nationality', label: 'Nationality', required: true },
+            { field: 'nid', label: 'NID' },
+            { field: 'occupation', label: 'Occupation / Profession' },
+            { field: 'organization', label: 'Name of organization' },
+            { field: 'date_of_birth', label: 'Date of birth', type: 'date' },
+        ];
+
+        const bookingSummary = (
+            <section className="rounded-xl border border-slate-200 bg-white">
+                <h2 className="border-b border-slate-200 px-4 py-3 text-lg font-medium">
+                    Booking summary
+                </h2>
+                <div className="space-y-3 p-4 text-sm">
+                    <p className="font-semibold">{branch?.name}</p>
+                    <p className="text-slate-600">
+                        {[branch?.address, branch?.city, branch?.country].filter(Boolean).join(', ')}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-lg bg-indigo-100 p-3">
+                            <p className="text-xs text-slate-600">Check-in</p>
+                            <p className="font-semibold">{checkIn || '—'}</p>
+                        </div>
+                        <div className="rounded-lg bg-indigo-100 p-3">
+                            <p className="text-xs text-slate-600">Check-out</p>
+                            <p className="font-semibold">{checkOut || '—'}</p>
+                        </div>
+                    </div>
+                    <p>
+                        {selectedUnits.length} {selectedUnits.length === 1 ? 'room' : 'rooms'} ·{' '}
+                        {adults} {adults === 1 ? 'adult' : 'adults'} · {children}{' '}
+                        {children === 1 ? 'child' : 'children'} · {nights}{' '}
+                        {nights === 1 ? 'night' : 'nights'}
+                    </p>
+                </div>
+            </section>
+        );
+
+        return (
+            <>
+                <Head title={bookingStep === 'details' ? 'Customer details' : 'Review booking'} />
+                <main className="min-h-screen bg-[#f7f7f4] px-4 py-8 text-slate-900 sm:px-6">
+                    <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+                        <section className="min-w-0">
+                            <div className="mb-5 bg-slate-200 px-5 py-3">
+                                <h1 className="text-xl font-bold">
+                                    {bookingStep === 'details' ? 'Enter Your Details' : 'Booking Preview'}
+                                </h1>
+                            </div>
+                            {bookingStep === 'details' ? (
+                                <>
+                                    <p className="mb-5 inline-block bg-rose-50 px-3 py-1 text-sm text-slate-600">
+                                        Please fill in all fields marked with *.
+                                    </p>
+                                    <form
+                                        className="grid gap-5 rounded-xl bg-white p-5 shadow-sm sm:grid-cols-2"
+                                        onSubmit={(event) => {
+                                            event.preventDefault();
+                                            setBookingStep('preview');
+                                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                                        }}
+                                    >
+                                        {(errors.adults || errors.children || errors.unit_ids) && (
+                                            <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700 sm:col-span-2">
+                                                {errors.adults || errors.children || errors.unit_ids}
+                                            </p>
+                                        )}
+                                        {customerFields.map(({ field, label, required, type }) => (
+                                            <label key={field} className="grid content-start gap-1.5 text-sm">
+                                                <span>
+                                                    {required && <span className="text-rose-600">*</span>}{' '}
+                                                    {label}
+                                                </span>
+                                                <Input
+                                                    required={required}
+                                                    type={type ?? 'text'}
+                                                    value={customerDetails[field]}
+                                                    onChange={(event) =>
+                                                        updateCustomerDetails(field, event.target.value)
+                                                    }
+                                                />
+                                                {errors[`customer_details.${field}`] && (
+                                                    <span role="alert" className="text-rose-700">
+                                                        {errors[`customer_details.${field}`]}
+                                                    </span>
+                                                )}
+                                            </label>
+                                        ))}
+                                        <label className="grid content-start gap-1.5 text-sm">
+                                            Gender
+                                            <select
+                                                className="h-10 rounded-md border border-input bg-background px-3"
+                                                value={customerDetails.gender}
+                                                onChange={(event) =>
+                                                    updateCustomerDetails('gender', event.target.value)
+                                                }
+                                            >
+                                                <option value="">Select gender</option>
+                                                <option value="male">Male</option>
+                                                <option value="female">Female</option>
+                                                <option value="other">Other</option>
+                                            </select>
+                                        </label>
+                                        <label className="grid content-start gap-1.5 text-sm">
+                                            Number of persons
+                                            <Input readOnly value={totalGuests} />
+                                        </label>
+                                        <label className="grid gap-1.5 text-sm sm:col-span-2">
+                                            <span><span className="text-rose-600">*</span> Mailing address</span>
+                                            <textarea
+                                                required
+                                                maxLength={2000}
+                                                className="min-h-24 rounded-md border border-input bg-background px-3 py-2"
+                                                value={customerDetails.mailing_address}
+                                                onChange={(event) =>
+                                                    updateCustomerDetails('mailing_address', event.target.value)
+                                                }
+                                            />
+                                            {errors['customer_details.mailing_address'] && (
+                                                <span role="alert" className="text-rose-700">
+                                                    {errors['customer_details.mailing_address']}
+                                                </span>
+                                            )}
+                                        </label>
+                                        <fieldset className="sm:col-span-2">
+                                            <legend className="mb-2 text-sm">Purpose of visit</legend>
+                                            <div className="flex flex-wrap gap-4 text-sm">
+                                                {(['tourist', 'business', 'official', 'others'] as const).map(
+                                                    (purpose) => (
+                                                        <label key={purpose} className="flex items-center gap-2">
+                                                            <input
+                                                                type="radio"
+                                                                name="purpose_of_visit"
+                                                                value={purpose}
+                                                                checked={customerDetails.purpose_of_visit === purpose}
+                                                                onChange={(event) =>
+                                                                    updateCustomerDetails(
+                                                                        'purpose_of_visit',
+                                                                        event.target.value,
+                                                                    )
+                                                                }
+                                                            />
+                                                            {purpose[0].toUpperCase() + purpose.slice(1)}
+                                                        </label>
+                                                    ),
+                                                )}
+                                            </div>
+                                        </fieldset>
+                                        <div className="flex justify-between gap-3 sm:col-span-2">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={returnToRoomSelection}
+                                            >
+                                                Back
+                                            </Button>
+                                            <Button type="submit">Next</Button>
+                                        </div>
+                                    </form>
+                                </>
+                            ) : (
+                                <div className="space-y-5 rounded-xl bg-white p-5 shadow-sm">
+                                    <section>
+                                        <h2 className="mb-3 text-lg font-semibold">Customer details</h2>
+                                        <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                                            {customerFields.map(({ field, label }) => (
+                                                <div key={field}>
+                                                    <dt className="text-slate-500">{label}</dt>
+                                                    <dd className="font-medium">{customerDetails[field] || '—'}</dd>
+                                                </div>
+                                            ))}
+                                            <div>
+                                                <dt className="text-slate-500">Gender</dt>
+                                                <dd className="font-medium">{customerDetails.gender || '—'}</dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-slate-500">Number of persons</dt>
+                                                <dd className="font-medium">{totalGuests}</dd>
+                                            </div>
+                                            <div className="sm:col-span-2">
+                                                <dt className="text-slate-500">Mailing address</dt>
+                                                <dd className="font-medium">{customerDetails.mailing_address}</dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-slate-500">Purpose of visit</dt>
+                                                <dd className="font-medium">{customerDetails.purpose_of_visit || '—'}</dd>
+                                            </div>
+                                        </dl>
+                                    </section>
+                                    <section className="border-t border-slate-200 pt-4">
+                                        <h2 className="mb-3 text-lg font-semibold">Price summary</h2>
+                                        {selectedUnits.map((unit) => (
+                                            <div key={unit.id} className="flex justify-between gap-3 py-1 text-sm">
+                                                <span>{unit.name} · {nights} {nights === 1 ? 'night' : 'nights'}</span>
+                                                <span>{formatPrice(roomPrice(unit), currency)}</span>
+                                            </div>
+                                        ))}
+                                        <div className="mt-3 flex justify-between border-t border-slate-200 pt-3 font-semibold">
+                                            <span>Estimated total</span>
+                                            <span>{formatPrice(roomTotal, currency)}</span>
+                                        </div>
+                                    </section>
+                                    <form
+                                        className="flex justify-between gap-3"
+                                        onSubmit={confirmBooking}
+                                    >
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={() => setBookingStep('details')}
+                                        >
+                                            Back
+                                        </Button>
+                                        <Button type="submit">Confirm booking</Button>
+                                    </form>
+                                </div>
+                            )}
+                        </section>
+                        <aside className="space-y-5">
+                            {bookingSummary}
+                            <section className="rounded-xl border border-slate-200 bg-white">
+                                <h2 className="border-b border-slate-200 px-4 py-3 text-lg font-medium">
+                                    Price summary
+                                </h2>
+                                <div className="flex justify-between gap-3 p-4 text-sm">
+                                    <span>Total amount</span>
+                                    <span>{formatPrice(roomTotal, currency)}</span>
+                                </div>
+                                <div className="flex justify-between gap-3 bg-indigo-100 p-4 font-semibold">
+                                    <span>Estimated booking amount</span>
+                                    <span>{formatPrice(roomTotal, currency)}</span>
+                                </div>
+                            </section>
+                        </aside>
+                    </div>
+                </main>
+                {branch && customer && (
+                    <BranchMessengerBubble key={branch.id} branchId={branch.id} branchName={branch.name} customerId={customer.id} customerName={customer.name} />
+                )}
+            </>
+        );
+    }
 
     return (
         <>
@@ -576,7 +840,6 @@ export default function Book({
                                             onClick={() => {
                                                 setBranchId(item.id);
                                                 setSelectedUnitIds([]);
-                                                setExtras([]);
                                                 setSelectedRoomCategory(null);
                                             }}
                                             className="overflow-hidden rounded-2xl bg-white text-left shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:ring-amber-500"
@@ -635,6 +898,7 @@ export default function Book({
                             </section>
                         ) : branch ? (
                             <>
+                                {/* branch details and booking form */}
                                 <div className="order-1 flex flex-wrap items-start justify-between gap-3 lg:order-none">
                                     <div>
                                         <button
@@ -664,6 +928,8 @@ export default function Book({
                                         <Users className="size-4 text-amber-700" />
                                         {totalGuests} {totalGuests === 1 ? 'guest' : 'guests'}
                                         <span className="text-slate-400">·</span>
+                                        <span>Adults: {adults} · Children: {children}</span>
+                                        <span className="text-slate-400">·</span>
                                         {nights} {nights === 1 ? 'night' : 'nights'}
                                     </div>
                                 </div>
@@ -686,8 +952,11 @@ export default function Book({
                                                             ? 'available room'
                                                             : 'available rooms'}
                                                         <span aria-hidden="true">·</span>
-                                                        <span>Up to {category.capacity} guests per room</span>
-                                                        <span aria-hidden="true">·</span>
+                                                        <span>
+                                                            Adults: {category.capacity} · Children:{' '}
+                                                            {category.child_capacity} per room
+                                                        </span>
+                                                        {/* break */}
                                                         <span>{checkIn || 'Select check-in'} – {checkOut || 'Select check-out'}</span>
                                                     </div>
                                                 </div>
@@ -784,149 +1053,9 @@ export default function Book({
                                             {errors.adults}
                                         </p>
                                     )}
-                                    {errors.room_guest_names && (
+                                    {errors.children && (
                                         <p role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700">
-                                            {errors.room_guest_names}
-                                        </p>
-                                    )}
-                                </section>
-
-                                {selectedUnits.length > 0 && (
-                                    <form
-                                        id="booking-confirm-form"
-                                        onSubmit={confirmBooking}
-                                        className="order-5 space-y-6 lg:order-none"
-                                    >
-                                        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-                                            <h2 className="text-xl font-semibold">
-                                                Names of other guests
-                                            </h2>
-                                            <p className="mt-1 text-sm text-slate-500">
-                                                Add the names of guests staying in each selected room. Your account name is the lead guest.
-                                            </p>
-                                            <div className="mt-4 space-y-4">
-                                                {selectedUnits.map((unit) => (
-                                                    <label
-                                                        key={unit.id}
-                                                        className="grid gap-1.5 text-sm font-medium"
-                                                    >
-                                                        {unit.name} · Room {unit.number}
-                                                        <textarea
-                                                            className="min-h-20 rounded-xl border border-slate-200 p-3 text-sm font-normal"
-                                                            placeholder="One name per line (optional)"
-                                                            value={roomGuestNames[unit.id] ?? ''}
-                                                            onChange={(event) =>
-                                                                setRoomGuestNames({
-                                                                    ...roomGuestNames,
-                                                                    [unit.id]: event.target.value,
-                                                                })
-                                                            }
-                                                        />
-                                                    </label>
-                                                ))}
-                                            </div>
-                                        </section>
-
-                                        {branch.amenities.length > 0 && (
-                                            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-                                                <h2 className="text-xl font-semibold">
-                                                    Property facilities
-                                                </h2>
-                                                <p className="mt-1 text-sm text-slate-500">
-                                                    Select facilities you may want to use during your stay.
-                                                </p>
-                                                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                                                    {branch.amenities.map((amenity) => (
-                                                        <label
-                                                            key={amenity}
-                                                            className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm hover:bg-slate-50"
-                                                        >
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={extras.includes(amenity)}
-                                                                onChange={() =>
-                                                                    setExtras((current) =>
-                                                                        current.includes(amenity)
-                                                                            ? current.filter((item) => item !== amenity)
-                                                                            : [...current, amenity],
-                                                                    )
-                                                                }
-                                                                className="size-4 accent-amber-500"
-                                                            />
-                                                            {amenity}
-                                                            <span className="ml-auto text-xs text-slate-500">
-                                                                Included
-                                                            </span>
-                                                        </label>
-                                                    ))}
-                                                </div>
-                                            </section>
-                                        )}
-
-                                        <label className="grid gap-1.5 text-sm font-medium">
-                                            Special requests
-                                            <textarea
-                                                maxLength={2000}
-                                                className="min-h-24 rounded-xl border border-slate-200 bg-white p-3 text-sm font-normal"
-                                                placeholder="Anything that would make your stay more comfortable?"
-                                                value={specialRequests}
-                                                onChange={(event) =>
-                                                    setSpecialRequests(event.target.value)
-                                                }
-                                            />
-                                        </label>
-                                    </form>
-                                )}
-
-                                <section
-                                    id="facilities"
-                                    className="order-6 scroll-mt-20 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:order-none"
-                                >
-                                    <p className="text-sm font-semibold tracking-[0.18em] text-amber-700 uppercase">
-                                        Property facilities
-                                    </p>
-                                    <h2 className="mt-1 text-xl font-semibold">
-                                        Facilities & services
-                                    </h2>
-                                    {branch?.facilities.length ? (
-                                        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-                                            {branch.facilities.map((facility) => {
-                                                const Icon = facilityIcon(facility.icon_value);
-                                                const iconColor = /^#[0-9A-Fa-f]{6}$/.test(facility.color)
-                                                    ? facility.color
-                                                    : '#6B7280';
-
-                                                return (
-                                                    <div
-                                                        key={facility.id}
-                                                        className="flex min-w-0 flex-col items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-center"
-                                                        title={`${facility.category} · ${facility.icon_type}`}
-                                                    >
-                                                        <span
-                                                            className="grid size-10 shrink-0 place-items-center rounded-full bg-white"
-                                                            style={{ color: iconColor }}
-                                                        >
-                                                            {facility.icon_url ? (
-                                                                <img
-                                                                    src={facility.icon_url}
-                                                                    alt=""
-                                                                    aria-hidden="true"
-                                                                    className="size-5 object-contain"
-                                                                />
-                                                            ) : (
-                                                                <Icon className="size-5" aria-hidden="true" />
-                                                            )}
-                                                        </span>
-                                                        <span className="break-words text-sm font-medium">
-                                                            {facility.name}
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <p className="mt-3 text-sm text-slate-500">
-                                            No facilities are listed for this property yet.
+                                            {errors.children}
                                         </p>
                                     )}
                                 </section>
@@ -1137,32 +1266,31 @@ export default function Book({
                                 <p className="mt-1 text-right text-xs text-slate-500">
                                     Taxes and final rates are confirmed by the property.
                                 </p>
-                                {selectedUnits.length > 0 && totalGuests > capacity && (
+                                {selectedUnits.length > 0 && adults > adultCapacity && (
                                     <p className="mt-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
-                                        Your {totalGuests} guests exceed the selected rooms’ capacity of {capacity}. Add another room or reduce the guest count.
+                                        Your {adults} adults exceed the selected rooms’ adult capacity of {adultCapacity}. Add another room or reduce the adult count.
                                     </p>
                                 )}
-                                {selectedUnits.length > 0 && additionalGuestCount > totalGuests - 1 && (
+                                {selectedUnits.length > 0 && children > childCapacity && (
                                     <p className="mt-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
-                                        Enter no more than {totalGuests - 1} additional guest names.
+                                        Your {children} children exceed the selected rooms’ child capacity of {childCapacity}. Add another room or reduce the child count.
                                     </p>
                                 )}
-                                {selectedUnits.length > 0 && (
+                                {selectedUnits.length > 0 &&
+                                    checkIn &&
+                                    checkOut &&
+                                    hasCapacityForGuests && (
                                     <Button
                                         className="mt-5 w-full bg-slate-950 hover:bg-slate-800"
-                                        type="submit"
-                                        form="booking-confirm-form"
-                                        disabled={
-                                            totalGuests > capacity ||
-                                            additionalGuestCount > totalGuests - 1
-                                        }
+                                        type="button"
+                                        onClick={proceedToBook}
                                     >
-                                        {isAuthenticated ? 'Confirm booking' : 'Log in to continue'}
+                                        Proceed to Book
                                     </Button>
                                 )}
                                 {!isAuthenticated && selectedUnits.length > 0 && (
                                     <p className="mt-3 text-center text-xs text-slate-500">
-                                        You’ll be asked to sign in before the booking is submitted.
+                                        Sign in to continue to customer details.
                                     </p>
                                 )}
                                 {selectedUnits.length === 0 && (
@@ -1329,8 +1457,283 @@ export default function Book({
                     </DialogContent>
                 )}
             </Dialog>
+            {branch && customer && (
+                <BranchMessengerBubble key={branch.id} branchId={branch.id} branchName={branch.name} customerId={customer.id} customerName={customer.name} />
+            )}
         </>
     );
 }
 
 Book.layout = (page: React.ReactNode) => <AppLayoutHome>{page}</AppLayoutHome>;
+
+function BranchMessengerBubble({ branchId, branchName, customerId, customerName }: {
+    branchId: number;
+    branchName: string;
+    customerId: number;
+    customerName: string;
+}) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [conversationId, setConversationId] = useState<number | null>(null);
+    const [messages, setMessages] = useState<MessageBubbleData[]>([]);
+    const [message, setMessage] = useState('');
+    const [isSending, setIsSending] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const isSendingRef = useRef(false);
+    const conversationIdRef = useRef<number | null>(null);
+    const echoRef = useRef<Echo<'reverb'> | null>(null);
+    const activeChannelRef = useRef<number | null>(null);
+    const messageEndRef = useRef<HTMLDivElement>(null);
+    const groupedMessages = groupMessagesByDate(messages);
+
+    useEffect(() => {
+        if (messages.length > 0 && isOpen) {
+            messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [messages, isOpen]);
+
+    const readResponse = useCallback(async <T,>(response: Response): Promise<T> => {
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+            const details = payload !== null && typeof payload === 'object'
+                ? payload as { message?: string; errors?: Record<string, string[]> }
+                : {};
+            const validationError = details.errors
+                ? Object.values(details.errors).flat()[0]
+                : undefined;
+            throw new Error(validationError ?? details.message ?? `Request failed (${response.status}).`);
+        }
+        return payload as T;
+    }, []);
+
+    const requestHeaders = useCallback(() => {
+        const headers = new Headers({ Accept: 'application/json' });
+        const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
+        const xsrfCookie = document.cookie
+            .split('; ')
+            .find((cookie) => cookie.startsWith('XSRF-TOKEN='))
+            ?.split('=')
+            .slice(1)
+            .join('=');
+        if (token) {
+            headers.set('X-CSRF-TOKEN', token);
+        } else if (xsrfCookie) {
+            headers.set('X-XSRF-TOKEN', decodeURIComponent(xsrfCookie));
+        }
+        return headers;
+    }, []);
+
+    const requestHeadersWithSocket = useCallback(() => {
+        const headers = requestHeaders();
+        const socketId = echoRef.current?.socketId();
+        if (socketId) {
+            headers.set('X-Socket-ID', socketId);
+        }
+        return headers;
+    }, [requestHeaders]);
+
+    useEffect(() => {
+        const key = import.meta.env.VITE_REVERB_APP_KEY;
+        if (!key) return;
+
+        (window as typeof window & { Pusher: typeof Pusher }).Pusher = Pusher;
+        echoRef.current = new Echo({
+            broadcaster: 'reverb',
+            key,
+            wsHost: import.meta.env.VITE_REVERB_HOST || window.location.hostname,
+            wsPort: Number(import.meta.env.VITE_REVERB_PORT || 80),
+            wssPort: Number(import.meta.env.VITE_REVERB_PORT || 443),
+            forceTLS: (import.meta.env.VITE_REVERB_SCHEME || 'http') === 'https',
+            enabledTransports: ['ws', 'wss'],
+        });
+
+        return () => {
+            if (activeChannelRef.current !== null) {
+                echoRef.current?.leave(`conversation.${activeChannelRef.current}`);
+            }
+            echoRef.current?.disconnect();
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!echoRef.current || conversationId === null || activeChannelRef.current === conversationId) {
+            return;
+        }
+        if (activeChannelRef.current !== null) {
+            echoRef.current.leave(`conversation.${activeChannelRef.current}`);
+        }
+        activeChannelRef.current = conversationId;
+        echoRef.current.private(`conversation.${conversationId}`)
+            .listen('.message.sent', (incoming: MessageBubbleData) => {
+                setMessages((current) => current.some((item) => item.id === incoming.id)
+                    ? current
+                    : [...current, incoming]);
+            });
+    }, [conversationId]);
+
+    const openMessenger = async () => {
+        const opening = !isOpen;
+        setIsOpen(opening);
+        if (!opening || conversationId !== null) return;
+
+        setIsLoading(true);
+        setError(null);
+        try {
+            const existingResponse = await fetch(`/api/branches/${branchId}/conversation`, {
+                headers: requestHeaders(),
+                credentials: 'same-origin',
+            });
+            const existing = await readResponse<unknown>(existingResponse);
+            const validId = getConversationId(existing);
+            if (validId !== null) {
+                conversationIdRef.current = validId;
+                setConversationId(validId);
+                const historyResponse = await fetch(`/api/conversations/${validId}/messages`, {
+                    headers: requestHeaders(),
+                    credentials: 'same-origin',
+                });
+                const history = await readResponse<MessageBubbleData[]>(historyResponse);
+                setMessages((current) => {
+                    const combined = new Map(history.map((item) => [item.id, item]));
+                    current.forEach((item) => combined.set(item.id, item));
+                    return Array.from(combined.values()).sort((first, second) =>
+                        first.created_at.localeCompare(second.created_at),
+                    );
+                });
+            } else if (existing !== null && existing !== undefined && existing !== false) {
+                throw new Error('The conversation response did not include a valid ID.');
+            }
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : 'Unable to load this conversation.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const sendMessage = async (event?: React.FormEvent<HTMLFormElement>) => {
+        event?.preventDefault();
+        const body = message.trim();
+        if (!body || isSendingRef.current) return;
+
+        isSendingRef.current = true;
+        setIsSending(true);
+        setError(null);
+        const formData = new FormData();
+        formData.append('branch_id', String(branchId));
+        formData.append('body', body);
+        formData.append('type', 'text');
+        try {
+            const activeConversationId = conversationIdRef.current ?? conversationId;
+            if (activeConversationId === null) {
+                const response = await fetch('/api/conversations', {
+                    method: 'POST', headers: requestHeadersWithSocket(), body: formData, credentials: 'same-origin',
+                });
+                const result = await readResponse<{
+                    conversation?: unknown;
+                    message?: MessageBubbleData;
+                }>(response);
+                const validId = getConversationId(result.conversation);
+                if (validId === null || !result.message) {
+                    throw new Error('The server response was missing the conversation or message.');
+                }
+                conversationIdRef.current = validId;
+                setConversationId(validId);
+                setMessages((current) => current.some((item) => item.id === result.message!.id)
+                    ? current
+                    : [...current, result.message!]);
+            } else {
+                const validId = normalizeConversationId(activeConversationId);
+                if (validId === null) {
+                    throw new Error('The conversation ID is invalid. Please close and reopen the chat.');
+                }
+                const response = await fetch(`/api/conversations/${validId}/messages`, {
+                    method: 'POST', headers: requestHeadersWithSocket(), body: formData, credentials: 'same-origin',
+                });
+                const result = await readResponse<MessageBubbleData>(response);
+                setMessages((current) => current.some((item) => item.id === result.id)
+                    ? current
+                    : [...current, result]);
+            }
+            setMessage('');
+        } catch (sendError) {
+            setError(sendError instanceof Error ? sendError.message : 'Unable to send your message.');
+        } finally {
+            isSendingRef.current = false;
+            setIsSending(false);
+        }
+    };
+
+    return (
+        <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3">
+            {isOpen && (
+                <section className="flex h-[min(36rem,calc(100vh-7rem))] w-[min(24rem,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200" aria-label={`Message ${branchName}`}>
+                    <header className="flex items-center gap-3 bg-blue-600 px-4 py-3 text-white">
+                        <div className="flex size-9 items-center justify-center rounded-full bg-blue-400 font-semibold">{branchName.charAt(0).toUpperCase()}</div>
+                        <div className="min-w-0 flex-1"><p className="truncate font-semibold">{branchName}</p><p className="text-xs text-blue-100">Message the branch team</p></div>
+                        <button type="button" onClick={() => setIsOpen(false)} aria-label="Close chat" className="rounded-full p-2 transition hover:bg-blue-500"><XMarkIcon className="size-5" /></button>
+                    </header>
+                    <div className="flex-1 space-y-2 overflow-y-auto bg-slate-50 p-3">
+                        {isLoading ? (
+                            <div className="space-y-3 py-3" aria-label="Loading messages">{[0, 1, 2].map((item) => <div key={item} className={`h-10 w-2/3 animate-pulse rounded-2xl bg-slate-200 ${item % 2 === 0 ? '' : 'ml-auto'}`} />)}</div>
+                        ) : messages.length === 0 ? (
+                            <div className="flex min-h-64 flex-col items-center justify-center gap-2 px-5 text-center">
+                                <div className="text-4xl" aria-hidden="true">👋</div>
+                                <p className="text-sm font-medium">Hi {customerName}!</p>
+                                <p className="text-xs text-slate-500">Send a message to the {branchName} team. We typically reply within minutes.</p>
+                            </div>
+                        ) : Object.entries(groupedMessages).map(([date, dayMessages]) => (
+                            <div key={date}>
+                                <div className="my-3 flex items-center gap-2 text-[10px] text-slate-400"><span className="h-px flex-1 bg-slate-200" />{formatMessageDate(date)}<span className="h-px flex-1 bg-slate-200" /></div>
+                                {dayMessages.map((item, index) => {
+                                    const isMine = item.sender.type === 'customer';
+                                    const previous = dayMessages[index - 1];
+                                    return <MessageBubble key={item.id} message={item} isMine={isMine} showSender={!isMine && (!previous || previous.sender.id !== item.sender.id)} variant="pink" />;
+                                })}
+                            </div>
+                        ))}
+                        <div ref={messageEndRef} />
+                    </div>
+                    <form onSubmit={sendMessage} className="border-t border-slate-100 bg-white px-3 py-2">
+                        {error && <p role="alert" className="mb-2 text-xs text-red-600">{error}</p>}
+                        <div className="flex items-end gap-2">
+                            <textarea aria-label="Message" value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={1} maxLength={5000} placeholder="Type a message…" className="max-h-24 min-h-10 flex-1 resize-y overflow-y-auto rounded-full border border-slate-200 px-4 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+                            <button type="submit" disabled={isSending || !message.trim()} aria-label="Send message" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"><PaperAirplaneIcon className="size-4" /></button>
+                        </div>
+                    </form>
+                </section>
+            )}
+            <button type="button" onClick={() => void openMessenger()} aria-label={isOpen ? 'Close messaging' : 'Message branch'} aria-expanded={isOpen} className="flex size-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl hover:bg-blue-700">
+                {isOpen ? <XMarkIcon className="size-6" /> : <ChatBubbleLeftRightIcon className="size-6" />}
+            </button>
+        </div>
+    );
+}
+
+function getConversationId(payload: unknown): number | null {
+    if (payload === null || typeof payload !== 'object') {
+        return null;
+    }
+
+    const conversation = payload as {
+        id?: unknown;
+        conversation_id?: unknown;
+        conversation?: unknown;
+        data?: unknown;
+    };
+    const directId = normalizeConversationId(conversation.id ?? conversation.conversation_id);
+    if (directId !== null) {
+        return directId;
+    }
+
+    return getConversationId(conversation.conversation)
+        ?? getConversationId(conversation.data);
+}
+
+function normalizeConversationId(id: unknown): number | null {
+    const normalized = typeof id === 'number'
+        ? id
+        : typeof id === 'string' && /^\d+$/.test(id)
+            ? Number(id)
+            : Number.NaN;
+    return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}

@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
-    'tenant_id', 'branch_id', 'unit_type', 'number', 'name', 'floor', 'capacity',
+    'tenant_id', 'branch_id', 'unit_type', 'number', 'name', 'floor', 'capacity', 'child_capacity',
     'base_price', 'price_weekend', 'amenities', 'images', 'status', 'unit_category_id',
 ])]
 class Unit extends Model
@@ -21,6 +21,7 @@ class Unit extends Model
     {
         return [
             'capacity' => 'integer',
+            'child_capacity' => 'integer',
             'base_price' => 'decimal:2',
             'price_weekend' => 'decimal:2',
             'amenities' => 'array',

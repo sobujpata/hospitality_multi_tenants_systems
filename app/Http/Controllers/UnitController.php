@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Branch;
 use App\Models\Amenity;
+use App\Models\Branch;
 use App\Models\Tenant;
 use App\Models\Unit;
 use App\Models\UnitCategory;
@@ -95,6 +95,7 @@ class UnitController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'floor' => ['nullable', 'string', 'max:50'],
             'capacity' => ['required', 'integer', 'min:1'],
+            'child_capacity' => ['nullable', 'integer', 'min:0'],
             'base_price' => ['required', 'numeric', 'min:0'],
             'price_weekend' => ['nullable', 'numeric', 'min:0'],
             'amenities' => ['nullable', 'array'],
@@ -153,6 +154,10 @@ class UnitController extends Controller
 
     private function ensureManager(): void
     {
-        abort_unless(request()->user()?->is_super_admin || request()->user()?->hasAnyRole(['Tenant Owner', 'Branch Manager']), 403);
+        abort_unless(
+            request()->user()?->is_super_admin
+                || request()->user()?->hasAnyRole(['Tenant Owner', 'Branch Manager', 'Receptionist', 'Housekeeping']),
+            403,
+        );
     }
 }

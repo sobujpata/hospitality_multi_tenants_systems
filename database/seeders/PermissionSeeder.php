@@ -14,6 +14,10 @@ class PermissionSeeder extends Seeder
      * @var array<string, list<string>>
      */
     private array $rolePermissions = [
+        'Tenant Admin' => [
+            'bookings.create', 'bookings.view', 'bookings.delete', 'rooms.manage',
+            'staff.manage', 'reports.view', 'billing.manage', 'settings.manage',
+        ],
         'Tenant Owner' => [
             'bookings.create', 'bookings.view', 'bookings.delete', 'rooms.manage',
             'staff.manage', 'reports.view', 'billing.manage', 'settings.manage',

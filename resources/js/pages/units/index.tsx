@@ -20,6 +20,7 @@ type Unit = {
     name: string;
     floor: string | null;
     capacity: number;
+    child_capacity: number | null;
     base_price: string;
     price_weekend: string | null;
     amenities: string[] | null;
@@ -39,6 +40,7 @@ type UnitForm = {
     name: string;
     floor: string;
     capacity: string;
+    child_capacity: string;
     base_price: string;
     price_weekend: string;
     status: UnitStatus;
@@ -118,6 +120,7 @@ export default function Units({ units, categories, amenities, branches, currentB
         name: '',
         floor: '',
         capacity: '2',
+        child_capacity: '0',
         base_price: '0',
         price_weekend: '',
         status: 'available',
@@ -135,6 +138,7 @@ export default function Units({ units, categories, amenities, branches, currentB
         data.append('name', form.name);
         data.append('floor', form.floor);
         data.append('capacity', form.capacity);
+        data.append('child_capacity', form.child_capacity);
         data.append('base_price', form.base_price);
         data.append('price_weekend', form.price_weekend);
         data.append('status', form.status);
@@ -158,6 +162,7 @@ export default function Units({ units, categories, amenities, branches, currentB
                     price_weekend: '',
                     status: 'available',
                     unit_category_id: '',
+                    child_capacity: '0',
                 }));
                 setIsCreateDialogOpen(false);
             },
@@ -276,7 +281,7 @@ export default function Units({ units, categories, amenities, branches, currentB
                         />
                     </div>
                     <div>
-                        <Label htmlFor="unit-capacity">Guest capacity</Label>
+                        <Label htmlFor="unit-capacity">Adult capacity</Label>
                         <Input
                             id="unit-capacity"
                             required
@@ -285,6 +290,17 @@ export default function Units({ units, categories, amenities, branches, currentB
                             className="mt-1"
                             value={form.capacity}
                             onChange={(event) => update('capacity', event.target.value)}
+                        />
+                    </div>
+                    <div>
+                        <Label htmlFor="unit-child-capacity">Child capacity</Label>
+                        <Input
+                            id="unit-child-capacity"
+                            type="number"
+                            min="0"
+                            className="mt-1"
+                            value={form.child_capacity}
+                            onChange={(event) => update('child_capacity', event.target.value)}
                         />
                     </div>
                     <div>
@@ -552,7 +568,7 @@ export default function Units({ units, categories, amenities, branches, currentB
                             <div className="mt-2 text-sm font-medium">{unit.name}</div>
                             <div className="mt-1 text-xs">
                                 {unit.category?.name ?? 'Uncategorized'} · Floor{' '}
-                                {unit.floor ?? '-'} · Capacity {unit.capacity}
+                                {unit.floor ?? '-'} · Capacity {unit.capacity} · Child Capacity {unit.child_capacity ?? 0}
                             </div>
                             <div className="mt-2 flex flex-wrap gap-x-3 text-xs font-medium">
                                 <span>Base: {unit.base_price}</span>

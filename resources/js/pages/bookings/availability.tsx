@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 
 type Booking = { check_in: string; check_out: string; status: string };
 type Block = { starts_on: string; ends_on: string; reason: string | null };
-type Unit = { id: number; number: string; name: string; status: string; bookings: Booking[]; blocks: Block[] };
+type Unit = { id: number; number: string; name: string; status: string; branch?: { id: number; name: string } | null; bookings: Booking[]; blocks: Block[] };
 type Props = { start: string; end: string; units: Unit[] };
 
 const day = 86400000;
@@ -31,7 +31,7 @@ export default function Availability({ start, end, units }: Props) {
                 <div className="overflow-x-auto rounded-xl border">
                     <div className="min-w-[1100px]">
                         <div className="grid grid-cols-[190px_1fr] border-b bg-muted/40 text-xs font-medium"><div className="p-3">Unit</div><div className="grid" style={{ gridTemplateColumns: `repeat(${dates.length}, minmax(34px, 1fr))` }}>{dates.map((date) => <div key={date} className="border-l p-2 text-center">{new Date(`${date}T00:00:00`).getDate()}</div>)}</div></div>
-                        {units.map((unit) => <div key={unit.id} className="grid grid-cols-[190px_1fr] border-b last:border-0"><div className="p-3 text-sm"><div className="font-medium">{unit.number}</div><div className="text-xs text-muted-foreground">{unit.name}</div></div><div className="grid" style={{ gridTemplateColumns: `repeat(${dates.length}, minmax(34px, 1fr))` }}>{dates.map((date) => <div key={date} title={`${date}: ${state(unit, date)}`} className={`min-h-14 border-l border-dashed ${state(unit, date) === 'booked' ? 'bg-amber-300' : state(unit, date) === 'blocked' ? 'bg-slate-300' : 'bg-emerald-100'}`} />)}</div></div>)}
+                        {units.map((unit) => <div key={unit.id} className="grid grid-cols-[190px_1fr] border-b last:border-0"><div className="p-3 text-sm"><div className="truncate text-[10px] font-semibold uppercase tracking-wide text-indigo-600">{unit.branch?.name ?? 'Branch'}</div><div className="font-medium">{unit.number}</div><div className="text-xs text-muted-foreground">{unit.name}</div></div><div className="grid" style={{ gridTemplateColumns: `repeat(${dates.length}, minmax(34px, 1fr))` }}>{dates.map((date) => <div key={date} title={`${date}: ${state(unit, date)}`} className={`min-h-14 border-l border-dashed ${state(unit, date) === 'booked' ? 'bg-amber-300' : state(unit, date) === 'blocked' ? 'bg-slate-300' : 'bg-emerald-100'}`} />)}</div></div>)}
                     </div>
                 </div>
             </div>

@@ -1,10 +1,12 @@
 <?php
 
 use App\Http\Middleware\AuditSuperAdminAction;
+use App\Http\Middleware\AuthenticateBroadcastingUser;
 use App\Http\Middleware\EnsureFeatureEnabled;
 use App\Http\Middleware\EnsureTenantBillingAccess;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\InitializeCustomerTenant;
 use App\Http\Middleware\InitializeTenancyBySubdomain;
 use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Foundation\Application;
@@ -12,14 +14,23 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
-        channels: __DIR__.'/../routes/channels.php',
         health: '/up',
+    )
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        [
+            'middleware' => [
+                'web',
+                AuthenticateBroadcastingUser::class,
+            ],
+        ],
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
@@ -32,12 +43,15 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'initialize.tenancy' => InitializeTenancyBySubdomain::class,
+            'initialize.customer.tenant' => InitializeCustomerTenant::class,
             'billing.access' => EnsureTenantBillingAccess::class,
             'feature' => EnsureFeatureEnabled::class,
             'superadmin.audit' => AuditSuperAdminAction::class,
         ]);
 
         $middleware->prependToPriorityList(AuthenticatesRequests::class, InitializeTenancyBySubdomain::class);
+        $middleware->prependToPriorityList(SubstituteBindings::class, AuthenticateBroadcastingUser::class);
+        $middleware->prependToPriorityList(SubstituteBindings::class, InitializeCustomerTenant::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

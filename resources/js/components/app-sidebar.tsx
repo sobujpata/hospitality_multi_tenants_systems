@@ -146,6 +146,11 @@ const mainNavItems: NavItem[] = [
         icon: UserRoundSearch,
     },
     {
+        title: 'Inbox',
+        href: '/inbox',
+        icon: MessageSquare,
+    },
+    {
         title: 'Reports',
         href: '/reports',
         icon: FileBarChart,
@@ -168,7 +173,11 @@ const mainNavItems: NavItem[] = [
 ];
 
 const footerNavItems: NavItem[] = [
-    //
+    {
+        title: 'Inbox',
+        href: '/inbox',
+        icon: MessageSquare,
+    },
 ];
 
 const roleNavAccess: Record<string, string[]> = {
@@ -177,7 +186,7 @@ const roleNavAccess: Record<string, string[]> = {
     'Communications': [],
     'Audit Log': [],
     'Role Manager': ['Tenant Owner'],
-    'Users': ['Tenant Owner'],
+    'Users': ['Tenant Admin', 'Tenant Owner', 'Branch Manager'],
     'Permissions': ['Tenant Owner'],
     'Branches': ['Tenant Owner'],
     'Units & Floor Plan': [
@@ -195,11 +204,12 @@ const roleNavAccess: Record<string, string[]> = {
     'Housekeeping': ['Tenant Owner', 'Branch Manager', 'Housekeeping'],
     'Maintenance': ['Tenant Owner', 'Branch Manager', 'Housekeeping'],
     'Customers': ['Tenant Owner', 'Branch Manager', 'Receptionist'],
+    'Inbox': ['Tenant Admin', 'Tenant Owner', 'Branch Manager', 'Receptionist'],
     'Reports': ['Tenant Owner', 'Branch Manager', 'Accountant'],
     'Billing': ['Tenant Owner', 'Branch Manager', 'Accountant'],
     'Tenant Settings': ['Tenant Owner'],
     'Room Category': ['Tenant Owner'],
-    Amenities: ['Tenant Owner'],
+    'Amenities': ['Tenant Owner'],
 };
 
 export function AppSidebar() {
