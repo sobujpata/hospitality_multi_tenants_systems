@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\Tenant;
 use App\Models\Unit;
 use App\Models\UnitCategory;
+use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -20,12 +21,16 @@ class UnitController extends Controller
     public function index(Request $request): Response
     {
         $this->ensureManager();
-        $branchId = $request->integer('branch_id') ?: session('branch_id');
+        $user = $request->user();
+        $canManageAllBranches = $this->canManageAllBranches($user instanceof User ? $user : null);
+        $branchId = $canManageAllBranches ? null : $user?->branch_id;
 
         return Inertia::render('units/index', [
             'units' => Unit::query()
                 ->with('category:id,name')
-                ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+                ->when(! $canManageAllBranches, fn ($query) => $branchId !== null
+                    ? $query->where('branch_id', $branchId)
+                    : $query->whereRaw('1 = 0'))
                 ->orderBy('floor')
                 ->orderBy('number')
                 ->get()
@@ -43,7 +48,12 @@ class UnitController extends Controller
                 }),
             'categories' => UnitCategory::query()->orderBy('name')->get(['id', 'name', 'unit_type']),
             'amenities' => Amenity::query()->orderBy('name')->get(['id', 'name']),
-            'branches' => Branch::query()->orderBy('name')->get(['id', 'name']),
+            'branches' => Branch::query()
+                ->when(! $canManageAllBranches, fn ($query) => $branchId !== null
+                    ? $query->whereKey($branchId)
+                    : $query->whereRaw('1 = 0'))
+                ->orderBy('name')
+                ->get(['id', 'name']),
             'currentBranchId' => $branchId,
         ]);
     }
@@ -56,17 +66,19 @@ class UnitController extends Controller
         return back()->with('status', 'Unit created.');
     }
 
-    public function update(Request $request, Unit $unit): RedirectResponse
+    public function update(Request $request, string $tenant, Unit $unit): RedirectResponse
     {
         $this->ensureManager();
-        $unit->update($this->validatedData($request));
+        $this->assertBranchAccess($unit);
+        $unit->update($this->validatedData($request, $unit));
 
         return back()->with('status', 'Unit updated.');
     }
 
-    public function destroy(Unit $unit): RedirectResponse
+    public function destroy(string $tenant, Unit $unit): RedirectResponse
     {
         $this->ensureManager();
+        $this->assertBranchAccess($unit);
         $unit->delete();
 
         return back()->with('status', 'Unit deleted.');
@@ -77,17 +89,26 @@ class UnitController extends Controller
         $this->ensureManager();
         $data = $request->validate([
             'unit_ids' => ['required', 'array', 'min:1'],
-            'unit_ids.*' => ['integer'],
+            'unit_ids.*' => ['integer', 'distinct'],
             'status' => ['required', Rule::in(['available', 'occupied', 'maintenance', 'reserved'])],
         ]);
+        $units = Unit::query()->whereIn('id', $data['unit_ids'])->get(['id', 'branch_id']);
+        abort_unless($units->count() === count($data['unit_ids']), 404);
+        foreach ($units as $unit) {
+            $this->assertBranchAccess($unit);
+        }
         Unit::query()->whereIn('id', $data['unit_ids'])->update(['status' => $data['status']]);
 
         return back()->with('status', 'Unit statuses updated.');
     }
 
     /** @return array<string, mixed> */
-    private function validatedData(Request $request): array
+    private function validatedData(Request $request, ?Unit $unit = null): array
     {
+        if ($request->boolean('amenities_present') && ! $request->exists('amenities')) {
+            $request->merge(['amenities' => []]);
+        }
+
         $data = $request->validate([
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'unit_type' => ['required', Rule::in(['room', 'table', 'villa', 'desk'])],
@@ -111,15 +132,16 @@ class UnitController extends Controller
             'unit_category_id' => ['nullable', 'integer', 'exists:unit_categories,id'],
         ]);
         $branch = Branch::findOrFail($data['branch_id']);
+        $user = request()->user();
         abort_unless(
-            request()->user()?->branch_id === null
-                || (int) request()->user()->branch_id === $branch->getKey(),
+            $this->canManageAllBranches($user instanceof User ? $user : null)
+                || ($user?->branch_id !== null && (int) $user->branch_id === (int) $branch->getKey()),
             403,
         );
         if (! empty($data['unit_category_id'])) {
             UnitCategory::findOrFail($data['unit_category_id']);
         }
-        $data['images'] = collect($data['images'] ?? [])
+        $uploadedImages = collect($data['images'] ?? [])
             ->map(function (UploadedFile $image): string {
                 $path = $image->store('rooms', 'public');
 
@@ -130,6 +152,8 @@ class UnitController extends Controller
                 return $path;
             })
             ->all();
+        $data['images'] = array_values(array_merge($unit?->images ?? [], $uploadedImages));
+        $data['amenities'] = $data['amenities'] ?? ($unit?->amenities ?? []);
         $data['tenant_id'] = Tenant::current()->getKey();
 
         return $data;
@@ -156,7 +180,23 @@ class UnitController extends Controller
     {
         abort_unless(
             request()->user()?->is_super_admin
-                || request()->user()?->hasAnyRole(['Tenant Owner', 'Branch Manager', 'Receptionist', 'Housekeeping']),
+                || request()->user()?->hasAnyRole(['Tenant Admin', 'Tenant Owner', 'Branch Manager', 'Receptionist', 'Housekeeping']),
+            403,
+        );
+    }
+
+    private function canManageAllBranches(?User $user): bool
+    {
+        return $user !== null
+            && ($user->is_super_admin || $user->hasAnyRole(['Tenant Admin', 'Tenant Owner']));
+    }
+
+    private function assertBranchAccess(Unit $unit): void
+    {
+        $user = request()->user();
+        abort_unless(
+            $this->canManageAllBranches($user instanceof User ? $user : null)
+                || ($user?->branch_id !== null && (int) $user->branch_id === (int) $unit->branch_id),
             403,
         );
     }

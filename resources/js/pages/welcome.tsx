@@ -5,6 +5,15 @@ import { Input } from '@/components/ui/input';
 
 type Branch = { id: number; name: string; type: string; city: string | null; country: string | null; cover_image: string | null; star_rating: number | null };
 
+function addOneDay(date: string): string {
+    if (!date) return '';
+
+    const [year, month, day] = date.split('-').map(Number);
+    const nextDay = new Date(year, month - 1, day + 1);
+
+    return `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+}
+
 export default function Welcome({ branches }: { branches: Branch[] }) {
     const bannerImages = [
         'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=2200&q=85',
@@ -56,8 +65,8 @@ export default function Welcome({ branches }: { branches: Branch[] }) {
                 </div>
                 <div className="absolute inset-x-6 bottom-0 z-10 translate-y-1/2 lg:inset-x-8">
                     <form onSubmit={submitAvailability} className="grid gap-4 rounded-3xl bg-white p-5 text-slate-900 shadow-2xl ring-1 ring-slate-200 md:grid-cols-[1fr_1fr_1.2fr_auto] md:items-end">
-                        <label className="grid gap-2 text-sm font-medium">Check in<Input type="date" value={checkIn} onChange={(event) => setCheckIn(event.target.value)} required /></label>
-                        <label className="grid gap-2 text-sm font-medium">Check out<Input type="date" value={checkOut} onChange={(event) => setCheckOut(event.target.value)} required /></label>
+                        <label className="grid gap-2 text-sm font-medium">Check in<Input type="date" value={checkIn} onChange={(event) => { const value = event.target.value; setCheckIn(value); setCheckOut(addOneDay(value)); }} required /></label>
+                        <label className="grid gap-2 text-sm font-medium">Check out<Input type="date" min={addOneDay(checkIn)} value={checkOut} onChange={(event) => setCheckOut(event.target.value)} required /></label>
                         <label className="grid gap-2 text-sm font-medium">Location<select className="h-9 rounded-md border bg-white px-3 text-sm" value={location} onChange={(event) => setLocation(event.target.value)}><option value="">All locations</option>{locations.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
                         <button type="submit" className="h-9 rounded-full bg-slate-950 px-5 text-sm font-medium text-white hover:bg-slate-800">Check availability</button>
                     </form>

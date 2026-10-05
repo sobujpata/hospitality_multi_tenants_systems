@@ -98,6 +98,16 @@ type CustomerDetails = {
 type BookingStep = 'selection' | 'details' | 'preview';
 
 const today = new Date().toISOString().slice(0, 10);
+
+function addOneDay(date: string): string {
+    if (!date) return '';
+
+    const [year, month, day] = date.split('-').map(Number);
+    const nextDay = new Date(year, month - 1, day + 1);
+
+    return `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+}
+
 const roomPhotoFallbacks = [
     'https://images.unsplash.com/photo-1611892440504-42a792e24d32?auto=format&fit=crop&w=800&q=85',
     'https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=800&q=85',
@@ -691,14 +701,18 @@ export default function Book({
                                     min={today}
                                     type="date"
                                     value={checkIn}
-                                    onChange={(event) => setCheckIn(event.target.value)}
+                                    onChange={(event) => {
+                                        const value = event.target.value;
+                                        setCheckIn(value);
+                                        setCheckOut(addOneDay(value));
+                                    }}
                                 />
                             </label>
                             <label className="grid gap-1.5 text-sm font-medium">
                                 Check-out
                                 <Input
                                     required
-                                    min={checkIn || today}
+                                    min={addOneDay(checkIn || today)}
                                     type="date"
                                     value={checkOut}
                                     onChange={(event) => setCheckOut(event.target.value)}

@@ -52,6 +52,15 @@ class TenantAuthController extends Controller
         return redirect()->route('dashboard', ['tenant' => Tenant::current()->slug]);
     }
 
+    public function logout(Request $request): RedirectResponse
+    {
+        Auth::guard('web')->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect()->route('tenant.login', ['tenant' => Tenant::current()->slug]);
+    }
+
     public function register(): Response
     {
         return Inertia::render('auth/register', [

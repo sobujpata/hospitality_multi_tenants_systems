@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\Branch;
+use App\Models\Conversation;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -81,6 +82,19 @@ class HandleInertiaRequests extends Middleware
                     ->mapWithKeys(fn (string $key): array => [$key => Tenant::current()->featureEnabled($key)])
                 : [],
             'unreadNotifications' => fn () => $request->user()?->unreadNotifications()->latest()->limit(10)->get(['id', 'data', 'created_at']) ?? [],
+            'unreadNotificationCount' => fn (): int => $request->user()?->unreadNotifications()->count() ?? 0,
+            'unreadInboxByConversation' => fn (): array => $user instanceof User
+                && array_intersect($roles, ['Tenant Admin', 'Tenant Owner', 'Branch Manager', 'Receptionist']) !== []
+                    ? Conversation::query()
+                        ->where('unread_staff', '>', 0)
+                        ->when(
+                            ! array_intersect($roles, ['Tenant Admin', 'Tenant Owner', 'Branch Manager']),
+                            fn ($query) => $query->where('branch_id', $user->branch_id),
+                        )
+                        ->get(['id', 'unread_staff'])
+                        ->mapWithKeys(fn (Conversation $conversation): array => [(string) $conversation->id => $conversation->unread_staff])
+                        ->all()
+                    : [],
             'tenantBranding' => fn () => Tenant::current()?->brandSettings(),
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
         ];

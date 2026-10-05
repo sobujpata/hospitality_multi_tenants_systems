@@ -1,5 +1,5 @@
 import { Head, Link, router, usePage } from '@inertiajs/react';
-import { ImagePlus, X } from 'lucide-react';
+import { ImagePlus, Pencil, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -109,7 +109,8 @@ export default function Units({ units, categories, amenities, branches, currentB
     ).errors ?? {};
     const [selected, setSelected] = useState<number[]>([]);
     const [bulkStatus, setBulkStatus] = useState<UnitStatus>('available');
-    const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+    const [isUnitDialogOpen, setIsUnitDialogOpen] = useState(false);
+    const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
     const [imageFiles, setImageFiles] = useState<File[]>([]);
     const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
     const [isDraggingImages, setIsDraggingImages] = useState(false);
@@ -129,7 +130,50 @@ export default function Units({ units, categories, amenities, branches, currentB
     const update = <K extends keyof UnitForm>(key: K, value: UnitForm[K]) => {
         setForm((previous) => ({ ...previous, [key]: value }));
     };
-    const create = (event: React.FormEvent<HTMLFormElement>) => {
+    const toggleSelected = (unitId: number) => {
+        setSelected((previous) => previous.includes(unitId)
+            ? previous.filter((id) => id !== unitId)
+            : [...previous, unitId]);
+    };
+    const openCreateDialog = () => {
+        setEditingUnit(null);
+        setImageFiles([]);
+        setSelectedAmenities([]);
+        setForm({
+            branch_id: String(currentBranchId ?? branches[0]?.id ?? ''),
+            unit_type: 'room',
+            number: '',
+            name: '',
+            floor: '',
+            capacity: '2',
+            child_capacity: '0',
+            base_price: '0',
+            price_weekend: '',
+            status: 'available',
+            unit_category_id: '',
+        });
+        setIsUnitDialogOpen(true);
+    };
+    const openEditDialog = (unit: Unit) => {
+        setEditingUnit(unit);
+        setImageFiles([]);
+        setSelectedAmenities(unit.amenities ?? []);
+        setForm({
+            branch_id: String(unit.branch_id),
+            unit_type: unit.unit_type,
+            number: unit.number,
+            name: unit.name,
+            floor: unit.floor ?? '',
+            capacity: String(unit.capacity),
+            child_capacity: String(unit.child_capacity ?? 0),
+            base_price: String(unit.base_price),
+            price_weekend: unit.price_weekend ?? '',
+            status: unit.status,
+            unit_category_id: String(unit.category?.id ?? ''),
+        });
+        setIsUnitDialogOpen(true);
+    };
+    const submitUnit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const data = new FormData();
         data.append('branch_id', form.branch_id);
@@ -143,28 +187,21 @@ export default function Units({ units, categories, amenities, branches, currentB
         data.append('price_weekend', form.price_weekend);
         data.append('status', form.status);
         data.append('unit_category_id', form.unit_category_id);
+        data.append('amenities_present', '1');
         selectedAmenities.forEach((amenity) =>
             data.append('amenities[]', amenity),
         );
         imageFiles.forEach((image) => data.append('images[]', image));
-        router.post('/units', data, {
+        if (editingUnit) {
+            data.append('_method', 'put');
+        }
+        router.post(editingUnit ? `/units/${editingUnit.id}` : '/units', data, {
             forceFormData: true,
             onSuccess: () => {
                 setImageFiles([]);
                 setSelectedAmenities([]);
-                setForm((current) => ({
-                    ...current,
-                    number: '',
-                    name: '',
-                    floor: '',
-                    capacity: '2',
-                    base_price: '0',
-                    price_weekend: '',
-                    status: 'available',
-                    unit_category_id: '',
-                    child_capacity: '0',
-                }));
-                setIsCreateDialogOpen(false);
+                setEditingUnit(null);
+                setIsUnitDialogOpen(false);
             },
         });
     };
@@ -194,24 +231,32 @@ export default function Units({ units, categories, amenities, branches, currentB
                             Manage rooms, tables, villas, and desks visually by status.
                         </p>
                     </div>
-                    <Button type="button" onClick={() => setIsCreateDialogOpen(true)}>
+                    <Button type="button" onClick={openCreateDialog}>
                         Add unit
                     </Button>
                 </div>
 
                 <Dialog
-                    open={isCreateDialogOpen}
-                    onOpenChange={setIsCreateDialogOpen}
+                    open={isUnitDialogOpen}
+                    onOpenChange={(open) => {
+                        setIsUnitDialogOpen(open);
+                        if (!open) {
+                            setEditingUnit(null);
+                            setImageFiles([]);
+                        }
+                    }}
                 >
                     <DialogContent className="w-[calc(100vw-2rem)] max-h-[96vh] overflow-y-auto sm:max-w-[calc(100vw-2rem)]">
                         <DialogHeader>
-                            <DialogTitle>Create unit</DialogTitle>
+                            <DialogTitle>{editingUnit ? 'Edit unit' : 'Create unit'}</DialogTitle>
                             <DialogDescription>
-                                Enter the unit details and add as many images as needed.
+                                {editingUnit
+                                    ? 'Update unit details. New images will be added to the existing gallery.'
+                                    : 'Enter the unit details and add as many images as needed.'}
                             </DialogDescription>
                         </DialogHeader>
                 <form
-                    onSubmit={create}
+                    onSubmit={submitUnit}
                     className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
                 >
                     <div>
@@ -435,6 +480,18 @@ export default function Units({ units, categories, amenities, branches, currentB
                                     {message}
                                 </p>
                             ))}
+                        {editingUnit && editingUnit.image_urls.length > 0 && (
+                            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                                {editingUnit.image_urls.map((image) => (
+                                    <img
+                                        key={image}
+                                        src={image}
+                                        alt={`${editingUnit.name} current image`}
+                                        className="h-28 w-full rounded-lg border object-cover"
+                                    />
+                                ))}
+                            </div>
+                        )}
                         {imageFiles.length > 0 && (
                             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                                 {imageFiles.map((file, index) => (
@@ -505,11 +562,11 @@ export default function Units({ units, categories, amenities, branches, currentB
                         <Button
                             type="button"
                             variant="outline"
-                            onClick={() => setIsCreateDialogOpen(false)}
+                            onClick={() => setIsUnitDialogOpen(false)}
                         >
                             Cancel
                         </Button>
-                        <Button type="submit">Create unit</Button>
+                        <Button type="submit">{editingUnit ? 'Save changes' : 'Create unit'}</Button>
                     </div>
                 </form>
                     </DialogContent>
@@ -545,17 +602,19 @@ export default function Units({ units, categories, amenities, branches, currentB
 
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {units.map((unit) => (
-                        <button
-                            type="button"
+                        <div
+                            role="button"
+                            tabIndex={0}
+                            aria-pressed={selected.includes(unit.id)}
                             key={unit.id}
-                            onClick={() =>
-                                setSelected((previous) =>
-                                    previous.includes(unit.id)
-                                        ? previous.filter((id) => id !== unit.id)
-                                        : [...previous, unit.id],
-                                )
-                            }
-                            className={`min-w-0 rounded-xl border-2 p-4 text-left shadow-sm transition ${colors[unit.status]} ${
+                            onClick={() => toggleSelected(unit.id)}
+                            onKeyDown={(event) => {
+                                if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                                    event.preventDefault();
+                                    toggleSelected(unit.id);
+                                }
+                            }}
+                            className={`min-w-0 cursor-pointer rounded-xl border-2 p-4 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${colors[unit.status]} ${
                                 selected.includes(unit.id)
                                     ? 'ring-2 ring-primary ring-offset-2'
                                     : ''
@@ -563,7 +622,24 @@ export default function Units({ units, categories, amenities, branches, currentB
                         >
                             <div className="flex items-center justify-between gap-3">
                                 <strong>{unit.number}</strong>
-                                <span className="text-xs uppercase">{unit.unit_type}</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs uppercase">{unit.unit_type}</span>
+                                    <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="outline"
+                                        aria-label={`Edit ${unit.name}`}
+                                        title="Edit unit"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            openEditDialog(unit);
+                                        }}
+                                        onKeyDown={(event) => event.stopPropagation()}
+                                        className="size-8 border-current/20 bg-white/80"
+                                    >
+                                        <Pencil className="size-4" />
+                                    </Button>
+                                </div>
                             </div>
                             <div className="mt-2 text-sm font-medium">{unit.name}</div>
                             <div className="mt-1 text-xs">
@@ -610,7 +686,7 @@ export default function Units({ units, categories, amenities, branches, currentB
                             <div className="mt-3 text-xs font-semibold uppercase">
                                 {unit.status}
                             </div>
-                        </button>
+                        </div>
                     ))}
                 </div>
                 {!units.length && (

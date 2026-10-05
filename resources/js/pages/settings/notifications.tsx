@@ -1,4 +1,4 @@
-import { Head, router } from '@inertiajs/react';
+import { Head, Link, router } from '@inertiajs/react';
 import {
     BellAlertIcon,
     BellIcon,
@@ -12,7 +12,7 @@ import {
     WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
 import { formatDistanceToNow } from 'date-fns';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 type Channel = 'database' | 'mail' | 'broadcast';
@@ -26,6 +26,7 @@ type Props = {
     events: Record<string, string>;
     preferences: Record<string, Channel[]>;
     notifications: NotificationEvent[];
+    canManagePreferences: boolean;
 };
 
 const channels: { id: Channel; title: string; description: string }[] = [
@@ -40,26 +41,55 @@ const eventIcons: Record<string, typeof BellIcon> = {
     checkin_reminder: BellAlertIcon,
     payment_received: CreditCardIcon,
     maintenance_completed: WrenchScrewdriverIcon,
+    task_assigned: ClipboardDocumentCheckIcon,
+    task_available: ClipboardDocumentCheckIcon,
     trial_expiring: ExclamationTriangleIcon,
     low_availability: BuildingOffice2Icon,
 };
 
-export default function Notifications({ events, preferences: initial, notifications }: Props) {
+export default function Notifications({ events, preferences: initial, notifications, canManagePreferences }: Props) {
+    const notificationEvents = {
+        ...events,
+        task_assigned: events.task_assigned ?? 'Task assigned to you',
+        task_available: events.task_available ?? 'Unassigned task available in your branch',
+    };
+    const [activity, setActivity] = useState(notifications);
+    const [markingReadIds, setMarkingReadIds] = useState<string[]>([]);
     const [preferences, setPreferences] = useState<Record<string, Channel[]>>(() =>
         Object.fromEntries(
-            Object.keys(events).map((event) => [event, initial[event] ?? channels.map((channel) => channel.id)]),
+            Object.keys(notificationEvents).map((event) => [event, initial[event] ?? channels.map((channel) => channel.id)]),
         ),
     );
     const [isSaving, setIsSaving] = useState(false);
     const [saved, setSaved] = useState(false);
     const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+
+    useEffect(() => {
+        setActivity(notifications);
+    }, [notifications]);
+
     const unreadCount = useMemo(
-        () => notifications.filter((notification) => !notification.read_at).length,
-        [notifications],
+        () => activity.filter((notification) => !notification.read_at).length,
+        [activity],
     );
     const visibleNotifications = showUnreadOnly
-        ? notifications.filter((notification) => !notification.read_at)
-        : notifications;
+        ? activity.filter((notification) => !notification.read_at)
+        : activity;
+
+    useEffect(() => {
+        const handleNotification = (event: Event) => {
+            const payload = (event as CustomEvent<Record<string, unknown>>).detail;
+            if (!payload) return;
+            const data = (payload.data && typeof payload.data === 'object' ? payload.data : payload) as NotificationEvent['data'];
+            const id = typeof payload.id === 'string' ? payload.id : undefined;
+            if (!id) return;
+            setActivity((current) => current.some((notification) => notification.id === id)
+                ? current
+                : [{ id, data, read_at: null, created_at: typeof payload.created_at === 'string' ? payload.created_at : new Date().toISOString() }, ...current].slice(0, 30));
+        };
+        window.addEventListener('notifications-updated', handleNotification);
+        return () => window.removeEventListener('notifications-updated', handleNotification);
+    }, []);
 
     const toggleChannel = (event: string, channel: Channel) => {
         setSaved(false);
@@ -85,7 +115,18 @@ export default function Notifications({ events, preferences: initial, notificati
     };
 
     const markAsRead = (id: string) => {
-        router.post(`/notifications/${encodeURIComponent(id)}/read`, {}, { preserveScroll: true });
+        if (markingReadIds.includes(id)) return;
+        setMarkingReadIds((current) => [...current, id]);
+        router.post(`/notifications/${encodeURIComponent(id)}/read`, {}, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setActivity((current) => current.map((notification) => notification.id === id
+                    ? { ...notification, read_at: new Date().toISOString() }
+                    : notification));
+                window.dispatchEvent(new CustomEvent('notification-read', { detail: { id } }));
+            },
+            onFinish: () => setMarkingReadIds((current) => current.filter((notificationId) => notificationId !== id)),
+        });
     };
 
     return (
@@ -117,7 +158,7 @@ export default function Notifications({ events, preferences: initial, notificati
                     </div>
                 </header>
 
-                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                {canManagePreferences && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                         <div>
                             <h2 className="text-lg font-semibold text-slate-900">Delivery preferences</h2>
@@ -133,7 +174,7 @@ export default function Notifications({ events, preferences: initial, notificati
                     </div>
 
                     <div className="divide-y divide-slate-100">
-                        {Object.entries(events).map(([event, label]) => {
+                        {Object.entries(notificationEvents).map(([event, label]) => {
                             const Icon = eventIcons[event] ?? BellIcon;
                             const selected = preferences[event] ?? [];
                             return (
@@ -175,7 +216,7 @@ export default function Notifications({ events, preferences: initial, notificati
                             </Button>
                         </div>
                     </footer>
-                </section>
+                </section>}
 
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                     <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -184,7 +225,7 @@ export default function Notifications({ events, preferences: initial, notificati
                                 <h2 className="text-lg font-semibold text-slate-900">Recent activity</h2>
                                 {unreadCount > 0 && <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-semibold text-violet-700">{unreadCount} new</span>}
                             </div>
-                            <p className="mt-1 text-sm text-slate-500">Your latest booking, payment, and operations updates.</p>
+                            <p className="mt-1 text-sm text-slate-500">Your latest booking, payment, task, and operations updates.</p>
                         </div>
                         <button
                             type="button"
@@ -216,7 +257,7 @@ export default function Notifications({ events, preferences: initial, notificati
                                     <span className={`mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl ${notification.read_at ? 'bg-slate-100 text-slate-500' : 'bg-violet-100 text-violet-700'}`}>
                                         <BellIcon className="size-5" />
                                     </span>
-                                    <div className="min-w-0 flex-1">
+                                        <div className="min-w-0 flex-1">
                                         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                                             <div className="min-w-0">
                                                 <h3 className={`text-sm ${notification.read_at ? 'font-medium text-slate-800' : 'font-semibold text-slate-900'}`}>
@@ -228,9 +269,14 @@ export default function Notifications({ events, preferences: initial, notificati
                                                 {formatDistanceToNow(new Date(notification.created_at), { addSuffix: true })}
                                             </time>
                                         </div>
+                                        {(typeof notification.data.task_id === 'number' || typeof notification.data.task_id === 'string') && (
+                                            <Link href={typeof notification.data.url === 'string' ? notification.data.url : '/tasks'} className="mt-2 inline-flex text-xs font-semibold text-violet-700 hover:text-violet-900">
+                                                View task
+                                            </Link>
+                                        )}
                                         {!notification.read_at && (
-                                            <button type="button" onClick={() => markAsRead(notification.id)} className="mt-2 text-xs font-semibold text-violet-700 hover:text-violet-900">
-                                                Mark as read
+                                            <button type="button" disabled={markingReadIds.includes(notification.id)} onClick={() => markAsRead(notification.id)} className="mt-2 text-xs font-semibold text-violet-700 hover:text-violet-900 disabled:opacity-50">
+                                                {markingReadIds.includes(notification.id) ? 'Saving…' : 'Mark as read'}
                                             </button>
                                         )}
                                     </div>

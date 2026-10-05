@@ -369,6 +369,9 @@ export default function StaffInbox({ staff, currentStaffId }: Props) {
                         item.id === conversation.id ? { ...item, unread_staff: 0 } : item,
                     ),
                 );
+                window.dispatchEvent(new CustomEvent('inbox-conversation-read', {
+                    detail: { conversation_id: conversation.id, reader_type: 'staff', unread_staff: 0 },
+                }));
             }
         } catch (loadError) {
             if (sequence === requestSequenceRef.current) {

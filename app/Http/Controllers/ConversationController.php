@@ -251,7 +251,13 @@ class ConversationController extends Controller
 
         $conversation->resetUnread($readerType);
 
-        broadcast(new MessageRead($conversation->id, $readerType))->toOthers();
+        broadcast(new MessageRead(
+            (int) $conversation->id,
+            $readerType,
+            (int) $conversation->branch_id,
+            (int) $conversation->tenant_id,
+            (int) $conversation->unread_staff,
+        ))->toOthers();
 
         $messages = $conversation->messages()
             ->with('sender')

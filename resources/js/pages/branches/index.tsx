@@ -166,7 +166,7 @@ export default function Branches({ branches, currentBranchId, settingsBranch }: 
                     </select>
                 </div>
                 <div className="overflow-x-auto rounded-xl border">
-                    <table className="w-full text-sm"><thead className="bg-muted/50"><tr><th className="px-4 py-3 text-left">Name</th><th className="px-4 py-3 text-left">Type</th><th className="px-4 py-3 text-left">Location</th><th className="px-4 py-3 text-left">Map</th><th className="px-4 py-3 text-left">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
+                    <table className="w-full text-sm"><thead className="bg-muted/50"><tr><th className="px-4 py-3 text-left">Name</th><th className="px-4 py-3 text-left">Type</th><th className="px-4 py-3 text-left">Location</th><th className="px-4 py-3 text-left">Time zone</th><th className="px-4 py-3 text-left">Map</th><th className="px-4 py-3 text-left">Status</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
                         <tbody>{branches.data.map((branch) => {
                             const branchMapQuery = branch.latitude && branch.longitude
                                 ? `${branch.latitude},${branch.longitude}`
@@ -177,6 +177,7 @@ export default function Branches({ branches, currentBranchId, settingsBranch }: 
                                     <td className="px-4 py-3">{branch.name}</td>
                                     <td className="px-4 py-3 capitalize">{branch.type}</td>
                                     <td className="px-4 py-3">{[branch.city, branch.country].filter(Boolean).join(', ')}</td>
+                                    <td className="px-4 py-3 font-mono text-xs">{branch.timezone}</td>
                                     <td className="px-4 py-3">
                                         {branchMapQuery ? (
                                             <a

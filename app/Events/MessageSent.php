@@ -2,6 +2,7 @@
 
 namespace App\Events;
 
+use App\Models\Conversation;
 use App\Models\Customer;
 use App\Models\Message;
 use App\Models\User;
@@ -22,15 +23,23 @@ class MessageSent implements ShouldBroadcast
      */
     private array $senderPayload;
 
+    private int $branchId;
+
+    private int $tenantId;
+
+    private int $unreadStaff;
+
     public function __construct(public Message $message)
     {
         $this->onConnection('deferred');
-        $message->loadMissing('sender');
+        $message->loadMissing(['sender', 'conversation']);
         $sender = $message->sender;
+        $conversation = $message->conversation;
 
         if (
             (! $sender instanceof Customer && ! $sender instanceof User)
             || $sender->getKey() === null
+            || ! $conversation instanceof Conversation
         ) {
             throw new LogicException('A message sender must be a customer or staff user.');
         }
@@ -41,12 +50,17 @@ class MessageSent implements ShouldBroadcast
             'avatar' => $sender->getAttribute('avatar'),
             'type' => $sender instanceof Customer ? 'customer' : 'staff',
         ];
+        $this->branchId = (int) $conversation->branch_id;
+        $this->tenantId = (int) $conversation->tenant_id;
+        $this->unreadStaff = (int) $conversation->unread_staff;
     }
 
     public function broadcastOn(): array
     {
         return [
             new PrivateChannel('conversation.'.$this->message->conversation_id),
+            new PrivateChannel('branch.'.$this->branchId.'.inbox'),
+            new PrivateChannel('tenant.'.$this->tenantId.'.inbox'),
         ];
     }
 
@@ -71,6 +85,9 @@ class MessageSent implements ShouldBroadcast
             'is_read' => $this->message->is_read,
             'created_at' => $this->message->created_at?->toISOString(),
             'sender' => $this->senderPayload,
+            'branch_id' => $this->branchId,
+            'tenant_id' => $this->tenantId,
+            'unread_staff' => $this->unreadStaff,
         ];
     }
 }

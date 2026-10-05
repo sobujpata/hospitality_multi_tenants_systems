@@ -28,6 +28,9 @@ Route::domain(env('APP_DOMAIN', 'localhost'))->prefix('admin')->group(function (
         Route::put('tenants/{tenant}', [SuperAdminTenantController::class, 'update'])->name('superadmin.tenants.update');
         Route::patch('tenants/{tenant}/status', [SuperAdminTenantController::class, 'updateStatus'])->name('superadmin.tenants.status');
         Route::delete('tenants/{tenant}', [SuperAdminTenantController::class, 'destroy'])->name('superadmin.tenants.destroy');
+        Route::post('tenants/{tenant}/users', [SuperAdminTenantController::class, 'storeUser'])->name('superadmin.tenants.users.store');
+        Route::put('tenants/{tenant}/users/{user}', [SuperAdminTenantController::class, 'updateUser'])->name('superadmin.tenants.users.update');
+        Route::delete('tenants/{tenant}/users/{user}', [SuperAdminTenantController::class, 'destroyUser'])->name('superadmin.tenants.users.destroy');
         Route::post('tenants/{tenant}/impersonate', [SuperAdminDashboardController::class, 'impersonate'])->name('superadmin.tenants.impersonate');
         Route::post('impersonation/stop', [SuperAdminDashboardController::class, 'stopImpersonation'])->name('superadmin.impersonation.stop');
         Route::put('tenants/{tenant}/billing', [SuperAdminDashboardController::class, 'override'])->name('superadmin.tenants.billing');

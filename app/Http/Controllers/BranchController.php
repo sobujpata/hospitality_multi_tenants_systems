@@ -53,7 +53,7 @@ class BranchController extends Controller
             'country' => 'nullable|string|max:100',
             'phone' => 'nullable|string|max:30',
             'email' => 'nullable|email|max:255',
-            'timezone' => 'required|string',
+            'timezone' => ['required', 'timezone'],
             'currency' => 'required|string|size:3',
             'star_rating' => 'nullable|integer|min:1|max:5',
             'amenities' => 'nullable|array',

@@ -76,6 +76,6 @@ class UnitCategoryController extends Controller
 
     private function ensureTenantOwner(): void
     {
-        abort_unless(request()->user()?->hasRole('Tenant Owner'), 403);
+        abort_unless(request()->user()?->hasRole(['Tenant Owner', 'Branch Manager']), 403);
     }
 }

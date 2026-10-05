@@ -25,6 +25,7 @@ Route::domain('{tenant}.'.env('APP_DOMAIN', 'localhost'))
     ->group(function (): void {
         Route::get('login', [TenantAuthController::class, 'login'])->name('tenant.login');
         Route::post('login', [TenantAuthController::class, 'authenticate'])->name('tenant.login.store');
+        Route::post('logout', [TenantAuthController::class, 'logout'])->name('tenant.logout');
         Route::get('register', [TenantAuthController::class, 'register'])->name('tenant.register');
         Route::post('register', [TenantAuthController::class, 'store'])->name('tenant.register.store');
         Route::get('forgot-password', [TenantAuthController::class, 'forgotPassword'])->name('tenant.password.request');

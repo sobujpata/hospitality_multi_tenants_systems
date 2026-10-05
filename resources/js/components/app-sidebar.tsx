@@ -1,4 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     CalendarRange,
     CalendarDays,
@@ -25,7 +26,6 @@ import {
     Sparkles,
 } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
-import { NavFooter } from '@/components/nav-footer';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
 import {
@@ -146,11 +146,6 @@ const mainNavItems: NavItem[] = [
         icon: UserRoundSearch,
     },
     {
-        title: 'Inbox',
-        href: '/inbox',
-        icon: MessageSquare,
-    },
-    {
         title: 'Reports',
         href: '/reports',
         icon: FileBarChart,
@@ -172,14 +167,6 @@ const mainNavItems: NavItem[] = [
     },
 ];
 
-const footerNavItems: NavItem[] = [
-    {
-        title: 'Inbox',
-        href: '/inbox',
-        icon: MessageSquare,
-    },
-];
-
 const roleNavAccess: Record<string, string[]> = {
     'Tenant Management': [],
     'System Health Panel': [],
@@ -190,6 +177,7 @@ const roleNavAccess: Record<string, string[]> = {
     'Permissions': ['Tenant Owner'],
     'Branches': ['Tenant Owner'],
     'Units & Floor Plan': [
+        'Tenant Admin',
         'Tenant Owner',
         'Branch Manager',
         'Receptionist',
@@ -200,7 +188,7 @@ const roleNavAccess: Record<string, string[]> = {
     'Channel Manager': ['Tenant Owner', 'Branch Manager'],
     'Staff Scheduling': ['Tenant Owner', 'Branch Manager'],
     'Attendance': ['Tenant Owner', 'Branch Manager'],
-    'Task Management': ['Tenant Owner', 'Branch Manager', 'Housekeeping'],
+    'Task Management': ['Tenant Owner', 'Branch Manager'],
     'Housekeeping': ['Tenant Owner', 'Branch Manager', 'Housekeeping'],
     'Maintenance': ['Tenant Owner', 'Branch Manager', 'Housekeeping'],
     'Customers': ['Tenant Owner', 'Branch Manager', 'Receptionist'],
@@ -208,13 +196,63 @@ const roleNavAccess: Record<string, string[]> = {
     'Reports': ['Tenant Owner', 'Branch Manager', 'Accountant'],
     'Billing': ['Tenant Owner', 'Branch Manager', 'Accountant'],
     'Tenant Settings': ['Tenant Owner'],
-    'Room Category': ['Tenant Owner'],
+    'Room Category': ['Tenant Owner', 'Branch Manager'],
     'Amenities': ['Tenant Owner'],
 };
 
 export function AppSidebar() {
     const page = usePage();
     const { auth } = page.props;
+    const initialInboxUnread = (page.props as typeof page.props & { unreadInboxByConversation?: Record<string, number> }).unreadInboxByConversation ?? {};
+    const [unreadInboxByConversation, setUnreadInboxByConversation] = useState(initialInboxUnread);
+    const inboxUnreadCount = useMemo(
+        () => Object.values(unreadInboxByConversation).reduce((total, count) => total + count, 0),
+        [unreadInboxByConversation],
+    );
+
+    useEffect(() => {
+        setUnreadInboxByConversation(initialInboxUnread);
+    }, [initialInboxUnread]);
+
+    useEffect(() => {
+        const handleNewMessage = (event: Event) => {
+            const message = (event as CustomEvent<{
+                conversation_id?: number;
+                sender?: { type?: string };
+                unread_staff?: number;
+            }>).detail;
+            if (!message?.conversation_id || message.sender?.type !== 'customer') return;
+
+            setUnreadInboxByConversation((current) => ({
+                ...current,
+                [message.conversation_id as number]: message.unread_staff ?? ((current[message.conversation_id as number] ?? 0) + 1),
+            }));
+        };
+        const handleConversationRead = (event: Event) => {
+            const read = (event as CustomEvent<{
+                conversation_id?: number;
+                reader_type?: string;
+                unread_staff?: number;
+            }>).detail;
+            if (!read?.conversation_id || read.reader_type !== 'staff') return;
+
+            setUnreadInboxByConversation((current) => {
+                const next = { ...current };
+                if (read.unread_staff) {
+                    next[read.conversation_id as number] = read.unread_staff;
+                } else {
+                    delete next[read.conversation_id as number];
+                }
+                return next;
+            });
+        };
+        window.addEventListener('inbox-message-received', handleNewMessage);
+        window.addEventListener('inbox-conversation-read', handleConversationRead);
+        return () => {
+            window.removeEventListener('inbox-message-received', handleNewMessage);
+            window.removeEventListener('inbox-conversation-read', handleConversationRead);
+        };
+    }, []);
     const featureFlags = (
         page.props as typeof page.props & { featureFlags?: Record<string, boolean> }
     ).featureFlags ?? {};
@@ -233,6 +271,8 @@ export function AppSidebar() {
               )
         : mainNavItems.filter((item) => {
               const allowedRoles = roleNavAccess[item.title];
+              const hasBranch = Boolean((auth.user as typeof auth.user & { branch_id?: number | null })?.branch_id);
+              const canSeeBranchTasks = item.title === 'Task Management' && hasBranch;
               const featureKey =
                   item.title === 'Channel Manager'
                       ? 'beta_channel_manager'
@@ -242,7 +282,7 @@ export function AppSidebar() {
 
               return (
                   !allowedRoles ||
-                  (allowedRoles.some((role) => userRoles.includes(role)) &&
+                  ((allowedRoles.some((role) => userRoles.includes(role)) || canSeeBranchTasks) &&
                       (!featureKey || featureFlags?.[featureKey]))
               );
           });
@@ -265,12 +305,11 @@ export function AppSidebar() {
             </SidebarHeader>
 
             <SidebarContent>
-                <NavMain items={visibleMainNavItems} />
+            <NavMain items={visibleMainNavItems} />
             </SidebarContent>
 
             <SidebarFooter>
-                <NavFooter items={footerNavItems} className="mt-auto" />
-                <NavUser />
+                <NavUser inboxUnreadCount={inboxUnreadCount} />
             </SidebarFooter>
         </Sidebar>
     );

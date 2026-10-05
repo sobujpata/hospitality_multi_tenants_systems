@@ -1,4 +1,5 @@
 import { Link, usePage } from '@inertiajs/react';
+import { useEffect, useRef, useState } from 'react';
 import { Bell, BookOpen, Folder, LayoutGrid, Menu, Search } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import AppLogoIcon from '@/components/app-logo-icon';
@@ -66,8 +67,39 @@ export function AppHeader({ breadcrumbs = [] }: Props) {
     const page = usePage();
     const { auth } = page.props;
     const unreadNotifications = (page.props as { unreadNotifications?: { id: string }[] }).unreadNotifications ?? [];
+    const initialUnreadCount = (page.props as { unreadNotificationCount?: number }).unreadNotificationCount ?? unreadNotifications.length;
+    const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
+    const knownUnreadIds = useRef(new Set(unreadNotifications.map((notification) => notification.id)));
+    const readNotificationIds = useRef(new Set<string>());
     const getInitials = useInitials();
     const { isCurrentUrl, whenCurrentUrl } = useCurrentUrl();
+
+    useEffect(() => {
+        setUnreadCount(initialUnreadCount);
+        knownUnreadIds.current = new Set(unreadNotifications.map((notification) => notification.id));
+    }, [initialUnreadCount, unreadNotifications]);
+
+    useEffect(() => {
+        const handleNotification = (event: Event) => {
+            const notification = (event as CustomEvent<{ id?: string }>).detail;
+            if (notification?.id && knownUnreadIds.current.has(notification.id)) return;
+            if (notification?.id) knownUnreadIds.current.add(notification.id);
+            setUnreadCount((count) => count + 1);
+        };
+        const handleRead = (event: Event) => {
+            const { id } = (event as CustomEvent<{ id?: string }>).detail ?? {};
+            if (!id || readNotificationIds.current.has(id)) return;
+            readNotificationIds.current.add(id);
+            knownUnreadIds.current.delete(id);
+            setUnreadCount((count) => Math.max(0, count - 1));
+        };
+        window.addEventListener('notifications-updated', handleNotification);
+        window.addEventListener('notification-read', handleRead);
+        return () => {
+            window.removeEventListener('notifications-updated', handleNotification);
+            window.removeEventListener('notification-read', handleRead);
+        };
+    }, []);
 
     return (
         <>
@@ -212,7 +244,7 @@ export function AppHeader({ breadcrumbs = [] }: Props) {
                         </div>
                         <Link href="/settings/notifications" className="relative mr-2 inline-flex size-9 items-center justify-center rounded-md hover:bg-accent" aria-label="Notifications">
                             <Bell className="size-5" />
-                            {unreadNotifications.length > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground">{unreadNotifications.length}</span>}
+                            {unreadCount > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground">{unreadCount}</span>}
                         </Link>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
